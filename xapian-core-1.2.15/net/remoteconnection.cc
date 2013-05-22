@@ -454,6 +454,139 @@ RemoteConnection::send_file(char type, int fd, double end_time)
 #endif
 }
 
+void RemoteConnection::send_file(char type, Xapian::File & fd, double end_time)
+{
+	LOGCALL_VOID(REMOTE, "RemoteConnection::send_file", type | fd.debug() | end_time);
+	if (fdout == -1) {
+		throw Xapian::DatabaseError("Database has been closed");
+	}
+
+	off_t size = fd.get_size();
+	// FIXME: Use sendfile() or similar if available?
+
+	char buf[CHUNKSIZE];
+	buf[0] = type;
+	size_t c = 1;
+	{
+		string enc_size = encode_length(size);
+		c += enc_size.size();
+		// An encoded length should be just a few bytes.
+		AssertRel(c, <=, sizeof(buf));
+		memcpy(buf + 1, enc_size.data(), enc_size.size());
+	}
+
+#ifdef __WIN32__
+	HANDLE hout = fd_to_handle(fdout);
+	size_t count = 0;
+	while (true) {
+		DWORD n;
+		BOOL ok = WriteFile(hout, buf + count, c - count, &n, &overlapped);
+		if (!ok) {
+			int errcode = GetLastError();
+			if (errcode != ERROR_IO_PENDING)
+				throw Xapian::NetworkError("write failed", context, -errcode);
+			// Just wait for the data to be received, or a timeout.
+			DWORD waitrc;
+			waitrc = WaitForSingleObject(overlapped.hEvent, calc_read_wait_msecs(end_time));
+			if (waitrc != WAIT_OBJECT_0) {
+				LOGLINE(REMOTE, "write: timeout has expired");
+				throw Xapian::NetworkTimeoutError("Timeout expired while trying to write", context);
+			}
+			// Get the final result.
+			if (!GetOverlappedResult(hout, &overlapped, &n, FALSE))
+				throw Xapian::NetworkError("Failed to get overlapped result",
+				context, -(int)GetLastError());
+		}
+
+		count += n;
+
+		// We must update the offset in the OVERLAPPED structure manually.
+		update_overlapped_offset(overlapped, n);
+
+		if (count == c) {
+			if (size == 0) return;
+
+			ssize_t res;
+			do {
+				res = fd.read_data( buf, sizeof(buf) );
+			} while (res < 0 && errno == EINTR);
+			if (res < 0) throw Xapian::NetworkError("read failed", errno);
+			c = size_t(res);
+
+			size -= c;
+			count = 0;
+		}
+	}
+#else
+	// If there's no end_time, just use blocking I/O.
+	if (fcntl(fdout, F_SETFL, (end_time != 0.0) ? O_NONBLOCK : 0) < 0) {
+		throw Xapian::NetworkError("Failed to set fdout non-blocking-ness",
+			context, errno);
+	}
+
+	fd_set fdset;
+	size_t count = 0;
+	while (true) {
+		// We've set write to non-blocking, so just try writing as there
+		// will usually be space.
+		ssize_t n = write(fdout, buf + count, c - count);
+
+		if (n >= 0) {
+			count += n;
+			if (count == c) {
+				if (size == 0) return;
+
+				ssize_t res;
+				do {
+					res = fd.read_data( buf, sizeof(buf));
+				} while (res < 0 && errno == EINTR);
+				if (res < 0) throw Xapian::NetworkError("read failed", errno);
+				c = size_t(res);
+
+				size -= c;
+				count = 0;
+			}
+			continue;
+		}
+
+		LOGLINE(REMOTE, "write gave errno = " << strerror(errno));
+		if (errno == EINTR) continue;
+
+		if (errno != EAGAIN)
+			throw Xapian::NetworkError("write failed", context, errno);
+
+		// Use select to wait until there is space or the timeout is reached.
+		FD_ZERO(&fdset);
+		FD_SET(fdout, &fdset);
+
+		double time_diff = end_time - RealTime::now();
+		if (time_diff < 0) {
+			LOGLINE(REMOTE, "write: timeout has expired");
+			throw Xapian::NetworkTimeoutError("Timeout expired while trying to write", context);
+		}
+
+		struct timeval tv;
+		tv.tv_sec = long(time_diff);
+		tv.tv_usec = long(fmod(time_diff, 1.0) * 1000000);
+
+		int select_result = select(fdout + 1, 0, &fdset, &fdset, &tv);
+
+		if (select_result < 0) {
+			if (errno == EINTR) {
+				// EINTR means select was interrupted by a signal.
+				// We could just retry the select, but it's easier to just
+				// retry the write.
+				continue;
+			}
+			throw Xapian::NetworkError("select failed during write", context, errno);
+		}
+
+		if (select_result == 0)
+			throw Xapian::NetworkTimeoutError("Timeout expired while trying to write", context);
+	}
+#endif
+}
+
 char
 RemoteConnection::sniff_next_message_type(double end_time)
 {

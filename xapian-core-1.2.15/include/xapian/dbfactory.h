@@ -27,6 +27,7 @@
 #include <xapian/types.h>
 #include <xapian/version.h>
 #include <xapian/visibility.h>
+#include <xapian/filesystem.h>
 
 namespace Xapian {
 
@@ -44,7 +45,7 @@ namespace Auto {
  * @param file  pathname of the stub database file.
  */
 XAPIAN_VISIBILITY_DEFAULT
-Database open_stub(const std::string &file);
+Database open_stub(const std::string &file, FileSystem file_system);
 
 /** Construct a WritableDatabase object for a stub database file.
  *
@@ -63,7 +64,7 @@ Database open_stub(const std::string &file);
  *					exists.
  */
 XAPIAN_VISIBILITY_DEFAULT
-WritableDatabase open_stub(const std::string &file, int action);
+WritableDatabase open_stub(const std::string &file, int action, FileSystem file_system);
 
 }
 
@@ -127,7 +128,7 @@ namespace Chert {
  * @param dir  pathname of the directory containing the database.
  */
 XAPIAN_VISIBILITY_DEFAULT
-Database open(const std::string &dir);
+Database open(const std::string &dir, FileSystem file_system = FileSystem());
 
 /** Construct a Database object for update access to a Chert database.
  *
@@ -149,7 +150,7 @@ Database open(const std::string &dir);
  */
 XAPIAN_VISIBILITY_DEFAULT
 WritableDatabase
-open(const std::string &dir, int action, int block_size = 8192);
+open(const std::string &dir, int action, int block_size = 8192, FileSystem file_system = FileSystem());
 
 }
 #endif

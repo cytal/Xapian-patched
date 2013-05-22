@@ -44,13 +44,13 @@ ReplicateTcpClient::open_socket(const string & hostname, int port,
 }
 
 void
-ReplicateTcpClient::update_from_master(const std::string & path,
+ReplicateTcpClient::update_from_master(const std::string & path, Xapian::FileSystem file_system,
 				       const std::string & masterdb,
 				       Xapian::ReplicationInfo & info,
 				       double reader_close_time,
 				       bool force_copy)
 {
-    Xapian::DatabaseReplica replica(path);
+    Xapian::DatabaseReplica replica(path, file_system);
     remconn.send_message('R',
 			 force_copy ? string() : replica.get_revision_info(),
 			 0.0);

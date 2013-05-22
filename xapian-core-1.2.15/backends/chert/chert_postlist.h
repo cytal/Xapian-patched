@@ -64,8 +64,8 @@ class ChertPostListTable : public ChertTable {
 	 *  @param readonly_      - whether to open the table for read only
 	 *                          access.
 	 */
-	ChertPostListTable(const string & path_, bool readonly_)
-	    : ChertTable("postlist", path_ + "/postlist.", readonly_),
+	ChertPostListTable(const string & path_, bool readonly_, Xapian::FileSystem file_system_)
+	    : ChertTable("postlist", path_ + "/postlist.", readonly_, DONT_COMPRESS, false, file_system_),
 	      doclen_pl()
 	{ }
 

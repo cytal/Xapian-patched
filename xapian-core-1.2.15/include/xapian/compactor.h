@@ -25,6 +25,7 @@
 
 #include <xapian/base.h>
 #include <xapian/visibility.h>
+#include <xapian/filesystem.h>
 #include <string>
 
 namespace Xapian {
@@ -43,7 +44,7 @@ class XAPIAN_VISIBILITY_DEFAULT Compactor {
     Xapian::Internal::RefCntPtr<Internal> internal;
 
   public:
-    Compactor();
+	Compactor(Xapian::FileSystem file_system_ = Xapian::FileSystem() );
 
     virtual ~Compactor();
 

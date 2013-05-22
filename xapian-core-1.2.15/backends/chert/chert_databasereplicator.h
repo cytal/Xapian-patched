@@ -31,6 +31,7 @@ class ChertDatabaseReplicator : public Xapian::DatabaseReplicator {
 	/** Path of database.
 	 */
 	std::string db_dir;
+	mutable Xapian::FileSystem file_system;
 
 	/** The maximum number of changesets which should be kept in the
 	 *  database. */
@@ -42,7 +43,7 @@ class ChertDatabaseReplicator : public Xapian::DatabaseReplicator {
 					  std::string & buf,
 					  RemoteConnection & conn,
 					  double end_time,
-					  int changes_fd) const;
+					  Xapian::File & changes_fd) const;
 
 	/** Process a chunk which holds a list of changed blocks in the
 	 *  database.
@@ -51,10 +52,10 @@ class ChertDatabaseReplicator : public Xapian::DatabaseReplicator {
 					    std::string & buf,
 					    RemoteConnection & conn,
 					    double end_time,
-					    int changes_fd) const;
+					    Xapian::File & changes_fd) const;
 
     public:
-	ChertDatabaseReplicator(const std::string & db_dir_);
+	ChertDatabaseReplicator(const std::string & db_dir_, Xapian::FileSystem file_system_);
 
 	/** Virtual methods of DatabaseReplicator. */
 	//@{

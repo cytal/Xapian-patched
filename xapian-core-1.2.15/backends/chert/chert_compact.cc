@@ -234,7 +234,7 @@ merge_postlists(Xapian::Compactor & compactor,
 	    if (!unpack_uint(&data, end, &doclen_lbound_tmp)) {
 		throw Xapian::DatabaseCorruptError("Tag containing meta information is corrupt.");
 	    }
-	    doclen_lbound = min(doclen_lbound, doclen_lbound_tmp);
+	    doclen_lbound = static_cast<Xapian::termcount>( min(doclen_lbound, doclen_lbound_tmp) );
 
 	    Xapian::termcount wdf_ubound_tmp;
 	    if (!unpack_uint(&data, end, &wdf_ubound_tmp)) {
@@ -690,6 +690,7 @@ multimerge_postlists(Xapian::Compactor & compactor,
 	tmpout.reserve(tmp.size() / 2);
 	vector<Xapian::docid> newoff;
 	newoff.resize(tmp.size() / 2);
+	Xapian::File	dummy;
 	for (unsigned int i = 0, j; i < tmp.size(); i = j) {
 	    j = i + 2;
 	    if (j == tmp.size() - 1) ++j;
@@ -716,7 +717,7 @@ multimerge_postlists(Xapian::Compactor & compactor,
 	    }
 	    tmpout.push_back(dest);
 	    tmptab.flush_db();
-	    tmptab.commit(1);
+	    tmptab.commit(1, dummy);
 	}
 	swap(tmp, tmpout);
 	swap(off, newoff);
@@ -785,7 +786,7 @@ compact_chert(Xapian::Compactor & compactor,
 	      const char * destdir, const vector<string> & sources,
 	      const vector<Xapian::docid> & offset, size_t block_size,
 	      Xapian::Compactor::compaction_level compaction, bool multipass,
-	      Xapian::docid last_docid) {
+	      Xapian::docid last_docid, Xapian::FileSystem file_system) {
     enum table_type {
 	POSTLIST, RECORD, TERMLIST, POSITION, VALUE, SPELLING, SYNONYM
     };
@@ -842,16 +843,16 @@ compact_chert(Xapian::Compactor & compactor,
 	    s += t->name;
 	    s += '.';
 
-	    struct stat sb;
-	    if (stat(s + "DB", &sb) == 0) {
-		in_size += sb.st_size / 1024;
-		output_will_exist = true;
-		++inputs_present;
+		Xapian::FileState	file_state;
+		if ( file_system.path_exist( s + "DB", &file_state ) ) {
+			in_size += file_state.file_size() / 1024;
+			output_will_exist = true;
+			++inputs_present;
 	    } else if (errno != ENOENT) {
-		// We get ENOENT for an optional table.
-		bad_stat = true;
-		output_will_exist = true;
-		++inputs_present;
+			// We get ENOENT for an optional table.
+			bad_stat = true;
+			output_will_exist = true;
+			++inputs_present;
 	    }
 	    inputs.push_back(s);
 	}
@@ -859,9 +860,9 @@ compact_chert(Xapian::Compactor & compactor,
 	// If any inputs lack a termlist table, suppress it in the output.
 	if (t->type == TERMLIST && inputs_present != sources.size()) {
 	    if (inputs_present != 0) {
-		string m = str(inputs_present);
+		string m = str( static_cast<unsigned int>(inputs_present) );
 		m += " of ";
-		m += str(sources.size());
+		m += str( static_cast<unsigned int>(sources.size()) );
 		m += " inputs present, so suppressing output";
 		compactor.set_status(t->name, m);
 		continue;
@@ -874,12 +875,12 @@ compact_chert(Xapian::Compactor & compactor,
 	    continue;
 	}
 
-	ChertTable out(t->name, dest, false, t->compress_strategy, t->lazy);
+	ChertTable out(t->name, dest, false, t->compress_strategy, t->lazy, file_system );
 	if (!t->lazy) {
-	    out.create_and_open(block_size);
+	    out.create_and_open( static_cast<unsigned int>(block_size) );
 	} else {
 	    out.erase();
-	    out.set_block_size(block_size);
+	    out.set_block_size( static_cast<unsigned int>(block_size) );
 	}
 
 	out.set_full_compaction(compaction != compactor.STANDARD);
@@ -910,15 +911,16 @@ compact_chert(Xapian::Compactor & compactor,
 
 	// Commit as revision 1.
 	out.flush_db();
-	out.commit(1);
+	Xapian::File	dummy;
+	out.commit(1, dummy);
 
 	off_t out_size = 0;
 	if (!bad_stat) {
-	    struct stat sb;
-	    if (stat(dest + "DB", &sb) == 0) {
-		out_size = sb.st_size / 1024;
+		Xapian::FileState	file_state;
+		if ( file_system.path_exist( dest + "DB", &file_state ) ) {
+			out_size = file_state.file_size() / 1024;
 	    } else {
-		bad_stat = (errno != ENOENT);
+			bad_stat = (errno != ENOENT);
 	    }
 	}
 	if (bad_stat) {

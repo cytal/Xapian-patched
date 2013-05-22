@@ -48,7 +48,7 @@
 # include "inmemory/inmemory_database.h"
 #endif
 
-#include <fstream>
+#include <sstream>
 #include <string>
 
 using namespace std;
@@ -71,15 +71,15 @@ Brass::open(const string &dir, int action, int block_size) {
 
 #ifdef XAPIAN_HAS_CHERT_BACKEND
 Database
-Chert::open(const string &dir) {
+Chert::open(const string &dir, FileSystem file_system) {
     LOGCALL_STATIC(API, Database, "Chert::open", dir);
-    return Database(new ChertDatabase(dir));
+    return Database(new ChertDatabase(dir, XAPIAN_DB_READONLY, 0u, file_system));
 }
 
 WritableDatabase
-Chert::open(const string &dir, int action, int block_size) {
+Chert::open(const string &dir, int action, int block_size, FileSystem file_system) {
     LOGCALL_STATIC(API, WritableDatabase, "Chert::open", dir | action | block_size);
-    return WritableDatabase(new ChertWritableDatabase(dir, action, block_size));
+    return WritableDatabase(new ChertWritableDatabase(dir, action, block_size, file_system));
 }
 #endif
 
@@ -106,7 +106,7 @@ InMemory::open() {
 #endif
 
 static void
-open_stub(Database &db, const string &file)
+open_stub(Database &db, const string &file, FileSystem file_system)
 {
     // A stub database is a text file with one or more lines of this format:
     // <dbtype> <serialised db object>
@@ -115,12 +115,14 @@ open_stub(Database &db, const string &file)
     //
     // Any paths specified in stub database files which are relative will be
     // considered to be relative to the directory containing the stub database.
-    ifstream stub(file.c_str());
-    if (!stub) {
-	string msg = "Couldn't open stub database file: ";
-	msg += file;
-	throw Xapian::DatabaseOpeningError(msg, errno);
-    }
+	string file_content;
+	if ( !file_system.load_file_to_string( file, file_content ) ) {
+		string msg = "Couldn't open stub database file: ";
+		msg += file;
+		throw Xapian::DatabaseOpeningError(msg, errno);
+	}
+
+	stringstream	stub( file_content );
     string line;
     unsigned int line_no = 0;
     while (getline(stub, line)) {
@@ -135,14 +137,14 @@ open_stub(Database &db, const string &file)
 
 	if (type == "auto") {
 	    resolve_relative_path(line, file);
-	    db.add_database(Database(line));
+	    db.add_database( Database(line, file_system) );
 	    continue;
 	}
 
 #ifdef XAPIAN_HAS_CHERT_BACKEND
 	if (type == "chert") {
 	    resolve_relative_path(line, file);
-	    db.add_database(Chert::open(line));
+	    db.add_database(Chert::open(line, file_system));
 	    continue;
 	}
 #endif
@@ -215,7 +217,7 @@ open_stub(Database &db, const string &file)
 }
 
 static void
-open_stub(WritableDatabase &db, const string &file, int action)
+open_stub(WritableDatabase &db, const string &file, int action, FileSystem file_system)
 {
     // A stub database is a text file with one or more lines of this format:
     // <dbtype> <serialised db object>
@@ -225,12 +227,14 @@ open_stub(WritableDatabase &db, const string &file, int action)
     //
     // Any paths specified in stub database files which are relative will be
     // considered to be relative to the directory containing the stub database.
-    ifstream stub(file.c_str());
-    if (!stub) {
-	string msg = "Couldn't open stub database file: ";
-	msg += file;
-	throw Xapian::DatabaseOpeningError(msg, errno);
-    }
+	string file_content;
+	if ( !file_system.load_file_to_string( file, file_content ) ) {
+		string msg = "Couldn't open stub database file: ";
+		msg += file;
+		throw Xapian::DatabaseOpeningError(msg, errno);
+	}
+	
+	stringstream	stub( file_content );
     string line;
     unsigned int line_no = 0;
     while (true) {
@@ -251,14 +255,14 @@ open_stub(WritableDatabase &db, const string &file, int action)
 
 	if (type == "auto") {
 	    resolve_relative_path(line, file);
-	    db.add_database(WritableDatabase(line, action));
+	    db.add_database(WritableDatabase(line, action, file_system));
 	    continue;
 	}
 
 #ifdef XAPIAN_HAS_CHERT_BACKEND
 	if (type == "chert") {
 	    resolve_relative_path(line, file);
-	    db.add_database(Chert::open(line, action));
+	    db.add_database(Chert::open(line, action, 8192, file_system));
 	    continue;
 	}
 #endif
@@ -327,71 +331,67 @@ open_stub(WritableDatabase &db, const string &file, int action)
 }
 
 Database
-Auto::open_stub(const string &file)
+Auto::open_stub(const string &file, FileSystem file_system)
 {
     LOGCALL_STATIC(API, Database, "Auto::open_stub", file);
     Database db;
-    open_stub(db, file);
+    open_stub(db, file, file_system);
     RETURN(db);
 }
 
 WritableDatabase
-Auto::open_stub(const string &file, int action)
+Auto::open_stub(const string &file, int action, FileSystem file_system)
 {
     LOGCALL_STATIC(API, WritableDatabase, "Auto::open_stub", file | action);
     WritableDatabase db;
-    open_stub(db, file, action);
+    open_stub(db, file, action, file_system);
     RETURN(db);
 }
 
-Database::Database(const string &path)
+Database::Database(const string &path, FileSystem file_system)
 {
     LOGCALL_CTOR(API, "Database", path);
 
-    struct stat statbuf;
-    if (stat(path, &statbuf) == -1) {
-	throw DatabaseOpeningError("Couldn't stat '" + path + "'", errno);
+	Xapian::FileState	file_state;
+	if ( !file_system.path_exist( path, &file_state ) ) {
+		throw DatabaseOpeningError("Couldn't stat '" + path + "'", errno);
     }
 
-    if (S_ISREG(statbuf.st_mode)) {
-	// The path is a file, so assume it is a stub database file.
-	open_stub(*this, path);
-	return;
-    }
-
-    if (rare(!S_ISDIR(statbuf.st_mode))) {
-	throw DatabaseOpeningError("Not a regular file or directory: '" + path + "'");
+	if ( file_state.isFile() ) {
+    	// The path is a file, so assume it is a stub database file.
+		open_stub(*this, path, file_system);
+		return;
     }
 
 #ifdef XAPIAN_HAS_CHERT_BACKEND
-    if (file_exists(path + "/iamchert")) {
-	internal.push_back(new ChertDatabase(path));
-	return;
+	if ( file_system.path_exist( path + "/iamchert" ) ) {
+		internal.push_back(new ChertDatabase(path, XAPIAN_DB_READONLY, 0u, file_system));
+		return;
     }
 #endif
 
 #ifdef XAPIAN_HAS_FLINT_BACKEND
-    if (file_exists(path + "/iamflint")) {
-	internal.push_back(new FlintDatabase(path));
-	return;
+	if ( file_system.path_exist( path + "/iamflint" ) ) {
+		internal.push_back(new FlintDatabase(path));
+		return;
     }
 #endif
 
 #ifdef XAPIAN_HAS_BRASS_BACKEND
-    if (file_exists(path + "/iambrass")) {
-	internal.push_back(new BrassDatabase(path));
-	return;
+	if ( file_system.path_exist( path + "/iambrass" ) ) {
+		internal.push_back(new BrassDatabase(path));
+		return;
     }
 #endif
 
     // Check for "stub directories".
     string stub_file = path;
     stub_file += "/XAPIANDB";
-    if (rare(!file_exists(stub_file))) {
-	throw DatabaseOpeningError("Couldn't detect type of database");
+	if ( !file_system.file_exist( stub_file ) ) {
+		throw DatabaseOpeningError("Couldn't detect type of database");
     }
 
-    open_stub(*this, stub_file);
+    open_stub(*this, stub_file, file_system );
 }
 
 #if defined XAPIAN_HAS_FLINT_BACKEND || \
@@ -400,7 +400,7 @@ Database::Database(const string &path)
 #define HAVE_DISK_BACKEND
 #endif
 
-WritableDatabase::WritableDatabase(const std::string &path, int action)
+WritableDatabase::WritableDatabase(const std::string &path, int action, FileSystem file_system)
     : Database()
 {
     LOGCALL_CTOR(API, "WritableDatabase", path | action);
@@ -418,54 +418,50 @@ WritableDatabase::WritableDatabase(const std::string &path, int action)
 	UNSET
     } type = UNSET;
 #endif
-    struct stat statbuf;
-    if (stat(path, &statbuf) == -1) {
-	// ENOENT probably just means that we need to create the directory.
-	if (errno != ENOENT)
-	    throw DatabaseOpeningError("Couldn't stat '" + path + "'", errno);
-    } else {
+
+	Xapian::FileState	file_state;
+	if ( !file_system.path_exist( path, &file_state ) ) {
+		// ENOENT probably just means that we need to create the directory.
+		if (errno != ENOENT)
+			throw DatabaseOpeningError("Couldn't stat '" + path + "'", errno);
+	} else {
 	// File or directory already exists.
+		if ( file_state.isFile() ) {
+		    // The path is a file, so assume it is a stub database file.
+			open_stub(*this, path, action, file_system);
+			return;
+		}
 
-	if (S_ISREG(statbuf.st_mode)) {
-	    // The path is a file, so assume it is a stub database file.
-	    open_stub(*this, path, action);
-	    return;
-	}
-
-	if (rare(!S_ISDIR(statbuf.st_mode))) {
-	    throw DatabaseOpeningError("Not a regular file or directory: '" + path + "'");
-	}
-
-	if (file_exists(path + "/iamchert")) {
-	    // Existing chert DB.
+		if ( file_system.path_exist( path + "/iamchert" ) ) {
+		    // Existing chert DB.
 #ifdef XAPIAN_HAS_CHERT_BACKEND
-	    type = CHERT;
+			type = CHERT;
 #else
-	    throw FeatureUnavailableError("Chert backend disabled");
+			throw FeatureUnavailableError("Chert backend disabled");
 #endif
-	} else if (file_exists(path + "/iamflint")) {
+		} else if ( file_system.path_exist( path + "/iamflint" ) ) {
 	    // Existing flint DB.
 #ifdef XAPIAN_HAS_FLINT_BACKEND
-	    type = FLINT;
+		    type = FLINT;
 #else
-	    throw FeatureUnavailableError("Flint backend disabled");
+		    throw FeatureUnavailableError("Flint backend disabled");
 #endif
-	} else if (file_exists(path + "/iambrass")) {
+		} else if ( file_system.path_exist( path + "/iambrass" ) ) {
 	    // Existing brass DB.
 #ifdef XAPIAN_HAS_BRASS_BACKEND
-	    type = BRASS;
+		    type = BRASS;
 #else
-	    throw FeatureUnavailableError("Brass backend disabled");
+		    throw FeatureUnavailableError("Brass backend disabled");
 #endif
-	} else {
+		} else {
 	    // Check for "stub directories".
-	    string stub_file = path;
-	    stub_file += "/XAPIANDB";
-	    if (usual(file_exists(stub_file))) {
-		open_stub(*this, stub_file, action);
-		return;
-	    }
-	}
+			string stub_file = path;
+			stub_file += "/XAPIANDB";
+			if ( file_system.file_exist( stub_file ) ) {
+				open_stub(*this, stub_file, action, file_system);
+				return;
+			}
+		}
     }
 
 #ifdef HAVE_DISK_BACKEND
@@ -487,7 +483,7 @@ WritableDatabase::WritableDatabase(const std::string &path, int action)
 	// by preference.
 #ifdef XAPIAN_HAS_CHERT_BACKEND
 	case CHERT:
-	    internal.push_back(new ChertWritableDatabase(path, action, 8192));
+	    internal.push_back(new ChertWritableDatabase(path, action, 8192, file_system));
 	    break;
 #endif
 #ifdef XAPIAN_HAS_FLINT_BACKEND

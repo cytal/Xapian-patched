@@ -60,7 +60,7 @@ ChertAllDocsModifiedPostList::get_docid() const
     LOGCALL(DB, Xapian::docid, "ChertAllDocsModifiedPostList::get_docid()", NO_ARGS);
     if (doclens_it == doclens.end()) RETURN(ChertAllDocsPostList::get_docid());
     if (ChertAllDocsPostList::at_end()) RETURN(doclens_it->first);
-    RETURN(min(doclens_it->first, ChertAllDocsPostList::get_docid()));
+    RETURN( static_cast<Xapian::docid>(min(doclens_it->first, ChertAllDocsPostList::get_docid())) );
 }
 
 Xapian::termcount

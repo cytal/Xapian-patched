@@ -24,6 +24,8 @@
 #include <cstring>
 #include <string>
 
+#include <xapian/filesystem.h>
+
 #include "common/safeuuid.h"
 
 /** The ChertVersion class manages the "iamchert" file.
@@ -34,6 +36,7 @@
 class ChertVersion {
     /// The filename of the version file.
     std::string filename;
+	Xapian::FileSystem	file_system;
 
     /** The UUID of this database.
      *
@@ -42,8 +45,8 @@ class ChertVersion {
     mutable uuid_t uuid;
 
   public:
-    ChertVersion(const std::string & dbdir) : filename(dbdir) {
-	filename += "/iamchert";
+    ChertVersion(const std::string & dbdir, Xapian::FileSystem file_system_) : filename(dbdir),file_system( file_system_ ) {
+		filename += "/iamchert";
     }
 
     /** Create the version file. */

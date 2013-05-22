@@ -27,6 +27,7 @@
 #include "xapian/registry.h"
 #include "xapian/visibility.h"
 #include "xapian/weight.h"
+#include "xapian/filesystem.h"
 
 #include "remoteconnection.h"
 
@@ -68,6 +69,9 @@ class XAPIAN_VISIBILITY_DEFAULT RemoteServer : private RemoteConnection {
 
     /// The registry, which allows unserialisation of user subclasses.
     Xapian::Registry reg;
+
+	/// The file system
+	Xapian::FileSystem	file_system;
 
     /// Accept a message from the client.
     message_type get_message(double timeout, std::string & result,
@@ -181,7 +185,8 @@ class XAPIAN_VISIBILITY_DEFAULT RemoteServer : private RemoteConnection {
 		 int fdin, int fdout,
 		 double active_timeout_,
 		 double idle_timeout_,
-		 bool writable = false);
+		 bool writable = false,
+		 Xapian::FileSystem file_system = Xapian::FileSystem() );
 
     /// Destructor.
     ~RemoteServer();

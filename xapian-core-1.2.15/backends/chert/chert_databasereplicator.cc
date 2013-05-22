@@ -52,8 +52,8 @@
 using namespace std;
 using namespace Xapian;
 
-ChertDatabaseReplicator::ChertDatabaseReplicator(const string & db_dir_)
-	: db_dir(db_dir_),
+ChertDatabaseReplicator::ChertDatabaseReplicator(const string & db_dir_, FileSystem file_system_)
+	: db_dir(db_dir_), file_system(file_system_),
 	  max_changesets(0)
 {
     const char *p = getenv("XAPIAN_MAX_CHANGESETS");
@@ -90,7 +90,7 @@ ChertDatabaseReplicator::process_changeset_chunk_base(const string & tablename,
 						      string & buf,
 						      RemoteConnection & conn,
 						      double end_time,
-						      int changes_fd) const
+						      Xapian::File & changes_fd) const
 {
     const char *ptr = buf.data();
     const char *end = ptr + buf.size();
@@ -110,7 +110,7 @@ ChertDatabaseReplicator::process_changeset_chunk_base(const string & tablename,
 	throw NetworkError("Invalid base file size in changeset");
 
     // Get the new base file into buf.
-    write_and_clear_changes(changes_fd, buf, ptr - buf.data());
+    changes_fd.write_and_clear_changes( buf, ptr - buf.data());
     conn.get_message_chunk(buf, base_size, end_time);
 
     if (buf.size() < base_size)
@@ -119,38 +119,26 @@ ChertDatabaseReplicator::process_changeset_chunk_base(const string & tablename,
     // Write base_size bytes from start of buf to base file for tablename
     string tmp_path = db_dir + "/" + tablename + "tmp";
     string base_path = db_dir + "/" + tablename + ".base" + letter;
-#ifdef __WIN32__
-    int fd = msvc_posix_open(tmp_path.c_str(), O_WRONLY | O_CREAT | O_TRUNC | O_BINARY);
-#else
-    int fd = ::open(tmp_path.c_str(), O_WRONLY | O_CREAT | O_TRUNC | O_BINARY, 0666);
-#endif
-    if (fd == -1) {
-	string msg = "Failed to open ";
-	msg += tmp_path;
-	throw DatabaseError(msg, errno);
-    }
-    {
-	fdcloser closer(fd);
-
-	io_write(fd, buf.data(), base_size);
-	io_sync(fd);
-    }
+	Xapian::File fd = file_system.open( tmp_path, O_WRONLY | O_CREAT | O_TRUNC | O_BINARY, 0666 );
+	if ( !fd.is_opened() ){
+		string msg = "Failed to open ";
+		msg += tmp_path;
+		throw DatabaseError(msg, errno);
+	}
+	fd.io_write( buf.data(), base_size);
+	fd.io_sync();
 
     // Finish writing the changeset before moving the base file into place.
-    write_and_clear_changes(changes_fd, buf, base_size);
+    changes_fd.write_and_clear_changes( buf, base_size);
 
-#if defined __WIN32__
-    if (msvc_posix_rename(tmp_path.c_str(), base_path.c_str()) < 0) {
-#else
-    if (rename(tmp_path.c_str(), base_path.c_str()) < 0) {
-#endif
+	if ( !file_system.rename( tmp_path, base_path ) ) {
 	// With NFS, rename() failing may just mean that the server crashed
 	// after successfully renaming, but before reporting this, and then
 	// the retried operation fails.  So we need to check if the source
 	// file still exists, which we do by calling unlink(), since we want
 	// to remove the temporary file anyway.
 	int saved_errno = errno;
-	if (unlink(tmp_path) == 0 || errno != ENOENT) {
+	if ( file_system.unlink( tmp_path ) ) {
 	    string msg("Couldn't update base file ");
 	    msg += tablename;
 	    msg += ".base";
@@ -165,7 +153,7 @@ ChertDatabaseReplicator::process_changeset_chunk_blocks(const string & tablename
 							string & buf,
 							RemoteConnection & conn,
 							double end_time,
-							int changes_fd) const
+							Xapian::File & changes_fd) const
 {
     const char *ptr = buf.data();
     const char *end = ptr + buf.size();
@@ -173,21 +161,16 @@ ChertDatabaseReplicator::process_changeset_chunk_blocks(const string & tablename
     unsigned int changeset_blocksize;
     if (!unpack_uint(&ptr, end, &changeset_blocksize))
 	throw NetworkError("Invalid blocksize in changeset");
-    write_and_clear_changes(changes_fd, buf, ptr - buf.data());
+    changes_fd.write_and_clear_changes( buf, ptr - buf.data());
 
     string db_path = db_dir + "/" + tablename + ".DB";
-#ifdef __WIN32__
-    int fd = msvc_posix_open(db_path.c_str(), O_WRONLY | O_CREAT | O_BINARY);
-#else
-    int fd = ::open(db_path.c_str(), O_WRONLY | O_CREAT | O_BINARY, 0666);
-#endif
-    if (fd == -1) {
-	string msg = "Failed to open ";
-	msg += db_path;
-	throw DatabaseError(msg, errno);
+	Xapian::File fd = file_system.open( db_path, O_WRONLY | O_CREAT | O_BINARY, 0666 );
+    if ( !fd.is_opened() ) {
+		string msg = "Failed to open ";
+		msg += db_path;
+		throw DatabaseError(msg, errno);
     }
     {
-	fdcloser closer(fd);
 
 	while (true) {
 	    conn.get_message_chunk(buf, REASONABLE_CHANGESET_SIZE, end_time);
@@ -197,7 +180,7 @@ ChertDatabaseReplicator::process_changeset_chunk_blocks(const string & tablename
 	    uint4 block_number;
 	    if (!unpack_uint(&ptr, end, &block_number))
 		throw NetworkError("Invalid block number in changeset");
-	    write_and_clear_changes(changes_fd, buf, ptr - buf.data());
+	    changes_fd.write_and_clear_changes( buf, ptr - buf.data());
 	    if (block_number == 0)
 		break;
 	    --block_number;
@@ -208,16 +191,16 @@ ChertDatabaseReplicator::process_changeset_chunk_blocks(const string & tablename
 
 	    // Write the block.
 	    // FIXME - should use pwrite if that's available.
-	    if (lseek(fd, off_t(changeset_blocksize) * block_number, SEEK_SET) == -1) {
+		if ( fd.seek( off_t(changeset_blocksize) * block_number, SEEK_SET) == -1) {
 		string msg = "Failed to seek to block ";
 		msg += str(block_number);
 		throw DatabaseError(msg, errno);
 	    }
-	    io_write(fd, buf.data(), changeset_blocksize);
+	    fd.io_write( buf.data(), changeset_blocksize);
 
-	    write_and_clear_changes(changes_fd, buf, changeset_blocksize);
+	    changes_fd.write_and_clear_changes( buf, changeset_blocksize);
 	}
-	io_sync(fd);
+	fd.io_sync();
     }
 }
 
@@ -229,10 +212,10 @@ ChertDatabaseReplicator::apply_changeset_from_conn(RemoteConnection & conn,
     LOGCALL(DB, string, "ChertDatabaseReplicator::apply_changeset_from_conn", conn | end_time | valid);
 
     // Lock the database to perform modifications.
-    FlintLock lock(db_dir);
+	Xapian::FileLock	lock(db_dir, file_system);
     string explanation;
-    FlintLock::reason why = lock.lock(true, explanation);
-    if (why != FlintLock::SUCCESS) {
+	Xapian::FileSystem::reason why = lock.lock(true, explanation);
+    if (why != Xapian::FileSystem::SUCCESS) {
 	lock.throw_databaselockerror(why, db_dir, explanation);
     }
 
@@ -273,20 +256,19 @@ ChertDatabaseReplicator::apply_changeset_from_conn(RemoteConnection & conn,
     if (ptr == end)
 	throw NetworkError("Unexpected end of changeset (1)");
 
-    int changes_fd = -1;
-    string changes_name;
+	string changes_name;
+	Xapian::File changes_fd;
+    
     if (max_changesets > 0) {
-	changes_fd = create_changeset_file(db_dir, "changes" + str(startrev),
-					   changes_name);
+	changes_fd = file_system.create_changeset_file( db_dir, "changes" + str(startrev), changes_name);
     }
-    fdcloser closer(changes_fd);
 
     if (valid) {
 	// Check the revision number.
 	// If the database was not known to be valid, we cannot
 	// reliably determine its revision number, so must skip this
 	// check.
-	ChertRecordTable record_table(db_dir, true);
+	ChertRecordTable record_table(db_dir, true, file_system);
 	record_table.open();
 	if (startrev != record_table.get_open_revision_number())
 	    throw NetworkError("Changeset supplied is for wrong revision number");
@@ -300,7 +282,7 @@ ChertDatabaseReplicator::apply_changeset_from_conn(RemoteConnection & conn,
     }
 
     // Write and clear the bits of the buffer which have been read.
-    write_and_clear_changes(changes_fd, buf, ptr + 1 - buf.data());
+    changes_fd.write_and_clear_changes( buf, ptr + 1 - buf.data());
 
     // Read the items from the changeset.
     while (true) {
@@ -329,7 +311,7 @@ ChertDatabaseReplicator::apply_changeset_from_conn(RemoteConnection & conn,
 	// Process the chunk
 	if (ptr == end)
 	    throw NetworkError("Unexpected end of changeset (4)");
-	write_and_clear_changes(changes_fd, buf, ptr - buf.data());
+	changes_fd.write_and_clear_changes( buf, ptr - buf.data());
 
 	switch (chunk_type) {
 	    case 1:
@@ -352,7 +334,7 @@ ChertDatabaseReplicator::apply_changeset_from_conn(RemoteConnection & conn,
     if (ptr != end)
 	throw NetworkError("Junk found at end of changeset");
 
-    write_and_clear_changes(changes_fd, buf, buf.size());
+    changes_fd.write_and_clear_changes( buf, buf.size());
     pack_uint(buf, reqrev);
     RETURN(buf);
 }
@@ -361,7 +343,7 @@ string
 ChertDatabaseReplicator::get_uuid() const
 {
     LOGCALL(DB, string, "ChertDatabaseReplicator::get_uuid", NO_ARGS);
-    ChertVersion version_file(db_dir);
+    ChertVersion version_file(db_dir, file_system);
     try {
 	version_file.read_and_check();
     } catch (const Xapian::DatabaseError &) {

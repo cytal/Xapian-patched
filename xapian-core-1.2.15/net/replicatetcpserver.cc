@@ -28,8 +28,8 @@
 using namespace std;
 
 ReplicateTcpServer::ReplicateTcpServer(const string & host, int port,
-				       const string & path_)
-    : TcpServer(host, port, false, false), path(path_)
+				       const string & path_, Xapian::FileSystem file_system_)
+    : TcpServer(host, port, false, false), path(path_), file_system( file_system_ )
 {
 }
 
@@ -59,7 +59,7 @@ ReplicateTcpServer::handle_one_connection(int socket)
 	string dbpath(path);
 	dbpath += '/';
 	dbpath += dbname;
-	Xapian::DatabaseMaster master(dbpath);
+	Xapian::DatabaseMaster master(dbpath, file_system);
 	master.write_changesets_to_fd(socket, start_revision, NULL);
     } catch (...) {
 	// Ignore exceptions.

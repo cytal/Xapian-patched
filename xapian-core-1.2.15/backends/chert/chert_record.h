@@ -47,8 +47,8 @@ class ChertRecordTable : public ChertTable {
 	 *  @param readonly_      - whether to open the table for read only
 	 *                          access.
 	 */
-	ChertRecordTable(const string & path_, bool readonly_)
-	    : ChertTable("record", path_ + "/record.", readonly_, Z_DEFAULT_STRATEGY) { }
+	ChertRecordTable(const string & path_, bool readonly_, Xapian::FileSystem file_system_)
+		: ChertTable("record", path_ + "/record.", readonly_, Z_DEFAULT_STRATEGY, false, file_system_) { }
 
 	/** Retrieve a document from the table.
 	 */

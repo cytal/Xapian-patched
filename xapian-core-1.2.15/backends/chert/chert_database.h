@@ -59,6 +59,7 @@ class ChertDatabase : public Xapian::Database::Internal {
 	/** Directory to store databases in.
 	 */
 	std::string db_dir;
+	mutable Xapian::FileSystem	file_system;
 
 	/** Whether the database is readonly.
 	 */
@@ -108,7 +109,8 @@ class ChertDatabase : public Xapian::Database::Internal {
 	ChertRecordTable record_table;
 
 	/// Lock object.
-	FlintLock lock;
+	//FlintLock lock;
+	Xapian::FileLock	lock;
 
 	/** The maximum number of changesets which should be kept in the
 	 *  database. */
@@ -237,8 +239,8 @@ class ChertDatabase : public Xapian::Database::Internal {
 	 *                    correct value, when the database is being
 	 *                    created.
 	 */
-	ChertDatabase(const string &db_dir_, int action = XAPIAN_DB_READONLY,
-		       unsigned int block_size = 0u);
+	ChertDatabase(const string &db_dir_, int action /*= XAPIAN_DB_READONLY*/,
+				unsigned int block_size /*= 0u*/, Xapian::FileSystem file_system_ /*= Xapian::FileSystem() */ );
 
 	~ChertDatabase();
 
@@ -414,7 +416,7 @@ class ChertWritableDatabase : public ChertDatabase {
 	 *
 	 *  @param dir directory holding chert tables
 	 */
-	ChertWritableDatabase(const string &dir, int action, int block_size);
+	ChertWritableDatabase(const string &dir, int action, int block_size, Xapian::FileSystem file_system_);
 
 	~ChertWritableDatabase();
 

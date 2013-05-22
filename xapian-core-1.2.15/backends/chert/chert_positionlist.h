@@ -49,9 +49,9 @@ class ChertPositionListTable : public ChertLazyTable {
      *  @param dbdir		The directory the chert database is stored in.
      *  @param readonly		true if we're opening read-only, else false.
      */
-    ChertPositionListTable(const string & dbdir, bool readonly)
+	ChertPositionListTable(const string & dbdir, bool readonly, Xapian::FileSystem file_system_)
 	: ChertLazyTable("position", dbdir + "/position.", readonly,
-			 DONT_COMPRESS) { }
+			 DONT_COMPRESS, file_system_) { }
 
     /** Set the position list for term tname in document did.
      *

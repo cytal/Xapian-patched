@@ -33,8 +33,8 @@ class ChertLazyTable : public ChertTable {
      *  @param z_strategy	zlib strategy.
      */
     ChertLazyTable(const char * name_, const std::string & path, bool readonly,
-		   int z_strategy)
-	: ChertTable(name_, path, readonly, z_strategy, true) { }
+		   int z_strategy, Xapian::FileSystem file_system_)
+	: ChertTable(name_, path, readonly, z_strategy, true, file_system_) { }
 
     /** Lazy version of ChertTable::create_and_open().
      *

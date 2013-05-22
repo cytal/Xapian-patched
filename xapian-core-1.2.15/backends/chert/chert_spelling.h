@@ -77,9 +77,9 @@ class ChertSpellingTable : public ChertLazyTable {
      *  @param dbdir		The directory the chert database is stored in.
      *  @param readonly		true if we're opening read-only, else false.
      */
-    ChertSpellingTable(const std::string & dbdir, bool readonly)
+	 ChertSpellingTable(const std::string & dbdir, bool readonly, Xapian::FileSystem file_system_)
 	: ChertLazyTable("spelling", dbdir + "/spelling.", readonly,
-			 Z_DEFAULT_STRATEGY) { }
+			 Z_DEFAULT_STRATEGY, file_system_) { }
 
     // Merge in batched-up changes.
     void merge_changes();

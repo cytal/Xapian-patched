@@ -165,26 +165,21 @@ do { \
 #define REASONABLE_BASE_SIZE 1024
 
 bool
-ChertTable_base::read(const string & name, char ch, bool read_bitmap,
+ChertTable_base::read(const string & name, Xapian::FileSystem & file_system, char ch, bool read_bitmap,
 		      string &err_msg)
 {
     string basename = name + "base" + ch;
-#ifdef __WIN32__
-    int h = msvc_posix_open(basename.c_str(), O_RDONLY | O_BINARY);
-#else
-    int h = open(basename.c_str(), O_RDONLY | O_BINARY);
-#endif
+	Xapian::File h = file_system.open( basename, O_RDONLY | O_BINARY, 0666 );
 
-    if (h == -1) {
+	if ( !h.is_opened() ) {
 	err_msg += "Couldn't open " + basename + ": " + strerror(errno) + "\n";
 	return false;
     }
-    fdcloser closefd(h);
 
     char buf[REASONABLE_BASE_SIZE];
 
     const char *start = buf;
-    const char *end = buf + io_read(h, buf, REASONABLE_BASE_SIZE, 0);
+    const char *end = buf + h.io_read(buf, REASONABLE_BASE_SIZE, 0);
 
     DO_UNPACK_UINT_ERRCHECK(&start, end, revision);
     uint4 format;
@@ -243,7 +238,7 @@ ChertTable_base::read(const string & name, char ch, bool read_bitmap,
     size_t n = end - start;
     if (n < bit_map_size) {
 	memcpy(bit_map0, start, n);
-	(void)io_read(h, reinterpret_cast<char *>(bit_map0) + n,
+	h.io_read( reinterpret_cast<char *>(bit_map0) + n,
 		      bit_map_size - n, bit_map_size - n);
 	n = 0;
     } else {
@@ -255,7 +250,7 @@ ChertTable_base::read(const string & name, char ch, bool read_bitmap,
 
     start = buf;
     end = buf + n;
-    end += io_read(h, buf + n, REASONABLE_BASE_SIZE - n, 0);
+    end += h.io_read( buf + n, REASONABLE_BASE_SIZE - n, 0);
 
     uint4 revision3;
     if (!unpack_uint(&start, end, &revision3)) {
@@ -279,61 +274,55 @@ ChertTable_base::read(const string & name, char ch, bool read_bitmap,
     return true;
 }
 
-void
-ChertTable_base::write_to_file(const string &filename,
-			       char base_letter,
-			       const string &tablename,
-			       int changes_fd,
-			       const string * changes_tail)
+void ChertTable_base::write_to_file(const std::string &filename,
+				   char base_letter,
+				   const std::string &tablename,
+				   Xapian::File & changes_file,
+				   Xapian::FileSystem & file_system,
+				   const std::string * changes_tail)
 {
-    calculate_last_block();
+	calculate_last_block();
 
-    string buf;
-    pack_uint(buf, revision);
-    pack_uint(buf, CURR_FORMAT);
-    pack_uint(buf, block_size);
-    pack_uint(buf, static_cast<uint4>(root));
-    pack_uint(buf, static_cast<uint4>(level));
-    pack_uint(buf, static_cast<uint4>(bit_map_size));
-    pack_uint(buf, item_count);
-    pack_uint(buf, static_cast<uint4>(last_block));
-    pack_uint(buf, have_fakeroot);
-    pack_uint(buf, sequential);
-    pack_uint(buf, revision);  // REVISION2
-    if (bit_map_size > 0) {
-	buf.append(reinterpret_cast<const char *>(bit_map), bit_map_size);
-    }
-    pack_uint(buf, revision);  // REVISION3
-
-#ifdef __WIN32__
-    int h = msvc_posix_open(filename.c_str(), O_WRONLY | O_CREAT | O_TRUNC | O_BINARY);
-#else
-    int h = open(filename.c_str(), O_WRONLY | O_CREAT | O_TRUNC | O_BINARY, 0666);
-#endif
-    if (h < 0) {
-	string message = string("Couldn't open base ")
-		+ filename + " to write: " + strerror(errno);
-	throw Xapian::DatabaseOpeningError(message);
-    }
-    fdcloser closefd(h);
-
-    if (changes_fd >= 0) {
-	string changes_buf;
-	pack_uint(changes_buf, 1u); // Indicate the item is a base file.
-	pack_string(changes_buf, tablename);
-	changes_buf += base_letter; // The base file letter.
-	pack_uint(changes_buf, buf.size());
-	io_write(changes_fd, changes_buf.data(), changes_buf.size());
-	io_write(changes_fd, buf.data(), buf.size());
-	if (changes_tail != NULL) {
-	    io_write(changes_fd, changes_tail->data(), changes_tail->size());
-	    // changes_tail is only specified for the final table, so sync.
-	    io_sync(changes_fd);
+	string buf;
+	pack_uint(buf, revision);
+	pack_uint(buf, CURR_FORMAT);
+	pack_uint(buf, block_size);
+	pack_uint(buf, static_cast<uint4>(root));
+	pack_uint(buf, static_cast<uint4>(level));
+	pack_uint(buf, static_cast<uint4>(bit_map_size));
+	pack_uint(buf, item_count);
+	pack_uint(buf, static_cast<uint4>(last_block));
+	pack_uint(buf, have_fakeroot);
+	pack_uint(buf, sequential);
+	pack_uint(buf, revision);  // REVISION2
+	if (bit_map_size > 0) {
+		buf.append(reinterpret_cast<const char *>(bit_map), bit_map_size);
 	}
-    }
+	pack_uint(buf, revision);  // REVISION3
 
-    io_write(h, buf.data(), buf.size());
-    io_sync(h);
+	Xapian::File h = file_system.open( filename, O_WRONLY | O_CREAT | O_TRUNC | O_BINARY, 0666);
+	if ( !h.is_opened() ) {
+		string message = string("Couldn't open base ") + filename + " to write: " + strerror(errno);
+		throw Xapian::DatabaseOpeningError(message);
+	}
+
+	if ( changes_file.is_opened() ) {
+		string changes_buf;
+		pack_uint(changes_buf, 1u); // Indicate the item is a base file.
+		pack_string(changes_buf, tablename);
+		changes_buf += base_letter; // The base file letter.
+		pack_uint(changes_buf, buf.size());
+		changes_file.io_write( changes_buf.data(), changes_buf.size());
+		changes_file.io_write( buf.data(), buf.size());
+		if (changes_tail != NULL) {
+			changes_file.io_write( changes_tail->data(), changes_tail->size());
+			// changes_tail is only specified for the final table, so sync.
+			changes_file.io_sync();
+		}
+	}
+
+	h.io_write( buf.data(), buf.size());
+	h.io_sync();
 }
 
 /*

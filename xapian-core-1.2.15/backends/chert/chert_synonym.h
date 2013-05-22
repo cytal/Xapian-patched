@@ -47,9 +47,9 @@ class ChertSynonymTable : public ChertLazyTable {
      *  @param dbdir		The directory the chert database is stored in.
      *  @param readonly		true if we're opening read-only, else false.
      */
-    ChertSynonymTable(const std::string & dbdir, bool readonly)
+	 ChertSynonymTable(const std::string & dbdir, bool readonly, Xapian::FileSystem file_system_)
 	: ChertLazyTable("synonym", dbdir + "/synonym.", readonly,
-			 Z_DEFAULT_STRATEGY) { }
+			 Z_DEFAULT_STRATEGY, file_system_) { }
 
     // Merge in batched-up changes.
     void merge_changes();

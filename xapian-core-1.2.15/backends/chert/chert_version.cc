@@ -73,75 +73,68 @@ ChertVersion::create()
     uuid_generate(uuid);
     memcpy(buf + MAGIC_LEN + 4, (void*)uuid, 16);
 
-    int fd = ::open(filename.c_str(), O_WRONLY|O_CREAT|O_TRUNC|O_BINARY, 0666);
-
-    if (fd < 0) {
-	string msg("Failed to create chert version file: ");
-	msg += filename;
-	throw Xapian::DatabaseOpeningError(msg, errno);
+	Xapian::File	fd = file_system.open( filename, O_WRONLY|O_CREAT|O_TRUNC|O_BINARY, 0666);
+    
+    if ( !fd.is_opened() ) {
+		string msg("Failed to create chert version file: ");
+		msg += filename;
+		throw Xapian::DatabaseOpeningError(msg, errno);
     }
 
     try {
-	io_write(fd, buf, VERSIONFILE_SIZE);
+		fd.io_write( buf, VERSIONFILE_SIZE);
     } catch (...) {
-	(void)close(fd);
-	throw;
+		throw;
     }
 
-    io_sync(fd);
-    if (close(fd) != 0) {
-	string msg("Failed to create chert version file: ");
-	msg += filename;
-	throw Xapian::DatabaseOpeningError(msg, errno);
-    }
+	fd.io_sync();
 }
 
 void
 ChertVersion::read_and_check()
 {
-    int fd = ::open(filename.c_str(), O_RDONLY|O_BINARY);
-
-    if (fd < 0) {
-	string msg = filename;
-	msg += ": Failed to open chert version file for reading";
-	throw Xapian::DatabaseOpeningError(msg, errno);
+	Xapian::File	fd = file_system.open( filename, O_RDONLY|O_BINARY, 0666);
+    
+    if ( !fd.is_opened() ) {
+		string msg = filename;
+		msg += ": Failed to open chert version file for reading";
+		throw Xapian::DatabaseOpeningError(msg, errno);
     }
 
     // Try to read an extra byte so we know if the file is too long.
     char buf[VERSIONFILE_SIZE + 1];
     size_t size;
     try {
-	size = io_read(fd, buf, VERSIONFILE_SIZE + 1, 0);
+		size = fd.io_read( buf, VERSIONFILE_SIZE + 1, 0);
     } catch (...) {
-	(void)close(fd);
-	throw;
+		throw;
     }
-    (void)close(fd);
+	fd.close();
 
     if (size != VERSIONFILE_SIZE) {
-	CompileTimeAssert(VERSIONFILE_SIZE == VERSIONFILE_SIZE_LITERAL);
-	string msg = filename;
-	msg += ": Chert version file should be "
+		CompileTimeAssert(VERSIONFILE_SIZE == VERSIONFILE_SIZE_LITERAL);
+		string msg = filename;
+		msg += ": Chert version file should be "
 	       STRINGIZE(VERSIONFILE_SIZE_LITERAL)" bytes, actually ";
-	msg += str(size);
-	throw Xapian::DatabaseCorruptError(msg);
+		msg += str(size);
+		throw Xapian::DatabaseCorruptError(msg);
     }
 
     if (memcmp(buf, MAGIC_STRING, MAGIC_LEN) != 0) {
-	string msg = filename;
-	msg += ": Chert version file doesn't contain the right magic string";
-	throw Xapian::DatabaseCorruptError(msg);
+		string msg = filename;
+		msg += ": Chert version file doesn't contain the right magic string";
+		throw Xapian::DatabaseCorruptError(msg);
     }
 
     const unsigned char *v;
     v = reinterpret_cast<const unsigned char *>(buf) + MAGIC_LEN;
     unsigned int version = v[0] | (v[1] << 8) | (v[2] << 16) | (v[3] << 24);
     if (version != CHERT_VERSION) {
-	string msg = filename;
-	msg += ": Chert version file is version ";
-	msg += str(version);
-	msg += " but I only understand "STRINGIZE(CHERT_VERSION);
-	throw Xapian::DatabaseVersionError(msg);
+		string msg = filename;
+		msg += ": Chert version file is version ";
+		msg += str(version);
+		msg += " but I only understand "STRINGIZE(CHERT_VERSION);
+		throw Xapian::DatabaseVersionError(msg);
     }
 
     memcpy((void*)uuid, buf + MAGIC_LEN + 4, 16);

@@ -36,6 +36,7 @@
 #include <xapian/termiterator.h>
 #include <xapian/valueiterator.h>
 #include <xapian/visibility.h>
+#include <xapian/filesystem.h>
 
 namespace Xapian {
 
@@ -92,7 +93,7 @@ class XAPIAN_VISIBILITY_DEFAULT Database {
 	 *
 	 * @param path directory that the database is stored in.
 	 */
-	explicit Database(const std::string &path);
+	explicit Database(const std::string &path, FileSystem file_system = FileSystem() );
 
 	/** @private @internal Create a Database from its internals.
 	 */
@@ -518,7 +519,7 @@ class XAPIAN_VISIBILITY_DEFAULT WritableDatabase : public Database {
 	 *  @exception Xapian::DatabaseLockError will be thrown if a lock
 	 *	       couldn't be acquired on the database.
 	 */
-	WritableDatabase(const std::string &path, int action);
+	WritableDatabase(const std::string &path, int action, FileSystem file_system = FileSystem() );
 
 	/** @private @internal Create an WritableDatabase given its internals.
 	 */

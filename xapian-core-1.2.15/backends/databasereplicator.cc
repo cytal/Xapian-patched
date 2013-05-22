@@ -49,24 +49,24 @@ DatabaseReplicator::~DatabaseReplicator()
 }
 
 DatabaseReplicator *
-DatabaseReplicator::open(const string & path)
+DatabaseReplicator::open(const string & path, FileSystem file_system)
 {
     LOGCALL_STATIC_VOID(DB, "DatabaseReplicator::DatabaseReplicator", path);
 
 #ifdef XAPIAN_HAS_CHERT_BACKEND
-    if (file_exists(path + "/iamchert")) {
-	return new ChertDatabaseReplicator(path);
+    if ( file_system.file_exist(path + "/iamchert") ) {
+	return new ChertDatabaseReplicator(path, file_system);
     }
 #endif
 
 #ifdef XAPIAN_HAS_FLINT_BACKEND
-    if (file_exists(path + "/iamflint")) {
+    if (file_system.file_exist(path + "/iamflint")) {
 	return new FlintDatabaseReplicator(path);
     }
 #endif
 
 #ifdef XAPIAN_HAS_BRASS_BACKEND
-    if (file_exists(path + "/iambrass")) {
+    if (file_system.file_exist(path + "/iambrass")) {
 	return new BrassDatabaseReplicator(path);
     }
 #endif

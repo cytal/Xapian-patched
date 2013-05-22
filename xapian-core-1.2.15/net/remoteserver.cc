@@ -47,10 +47,11 @@ struct ConnectionClosed { };
 RemoteServer::RemoteServer(const std::vector<std::string> &dbpaths,
 			   int fdin_, int fdout_,
 			   double active_timeout_, double idle_timeout_,
-			   bool writable_)
+			   bool writable_, Xapian::FileSystem file_system_)
     : RemoteConnection(fdin_, fdout_, std::string()),
       db(NULL), wdb(NULL), writable(writable_),
-      active_timeout(active_timeout_), idle_timeout(idle_timeout_)
+      active_timeout(active_timeout_), idle_timeout(idle_timeout_),
+	  file_system( file_system_ )
 {
     // Catch errors opening the database and propagate them to the client.
     try {
@@ -58,7 +59,7 @@ RemoteServer::RemoteServer(const std::vector<std::string> &dbpaths,
 	// We always open the database read-only to start with.  If we're
 	// writable, the client can ask to be upgraded to write access once
 	// connected if it wants it.
-	db = new Xapian::Database(dbpaths[0]);
+	db = new Xapian::Database(dbpaths[0], file_system);
 	// Build a better description than Database::get_description() gives
 	// in the variable context.  FIXME: improve Database::get_description()
 	// and then just use that instead.
@@ -67,7 +68,7 @@ RemoteServer::RemoteServer(const std::vector<std::string> &dbpaths,
 	if (!writable) {
 	    vector<std::string>::const_iterator i(dbpaths.begin());
 	    for (++i; i != dbpaths.end(); ++i) {
-		db->add_database(Xapian::Database(*i));
+		db->add_database(Xapian::Database(*i , file_system));
 		context += ' ';
 		context += *i;
 	    }
@@ -192,7 +193,7 @@ RemoteServer::run()
 	    size_t type = get_message(idle_timeout, message);
 	    if (type >= sizeof(dispatch)/sizeof(dispatch[0]) || !dispatch[type]) {
 		string errmsg("Unexpected message type ");
-		errmsg += str(type);
+		errmsg += str( static_cast<unsigned int>(type) );
 		throw Xapian::InvalidArgumentError(errmsg);
 	    }
 	    (this->*(dispatch[type]))(message);
@@ -250,7 +251,7 @@ RemoteServer::msg_termlist(const string &message)
 {
     const char *p = message.data();
     const char *p_end = p + message.size();
-    Xapian::docid did = decode_length(&p, p_end, false);
+    Xapian::docid did = static_cast<Xapian::docid>( decode_length(&p, p_end, false) );
 
     send_message(REPLY_DOCLENGTH, encode_length(db->get_doclength(did)));
     const Xapian::TermIterator end = db->termlist_end(did);
@@ -269,7 +270,7 @@ RemoteServer::msg_positionlist(const string &message)
 {
     const char *p = message.data();
     const char *p_end = p + message.size();
-    Xapian::docid did = decode_length(&p, p_end, false);
+	Xapian::docid did = static_cast<Xapian::docid>(decode_length(&p, p_end, false));
     string term(p, p_end - p);
 
     Xapian::termpos lastpos = static_cast<Xapian::termpos>(-1);
@@ -315,7 +316,7 @@ RemoteServer::msg_writeaccess(const string & msg)
     if (!writable) 
 	throw Xapian::InvalidOperationError("Server is read-only");
 
-    wdb = new Xapian::WritableDatabase(context, Xapian::DB_OPEN);
+    wdb = new Xapian::WritableDatabase(context, Xapian::DB_OPEN, file_system);
     delete db;
     db = wdb;
     msg_update(msg);
@@ -374,12 +375,12 @@ RemoteServer::msg_query(const string &message_in)
     p += len;
 
     // Unserialise assorted Enquire settings.
-    Xapian::termcount qlen = decode_length(&p, p_end, false);
+    Xapian::termcount qlen = static_cast<Xapian::termcount>( decode_length(&p, p_end, false) );
 
-    Xapian::valueno collapse_max = decode_length(&p, p_end, false);
+    Xapian::valueno collapse_max = static_cast<Xapian::valueno>( decode_length(&p, p_end, false) );
 
     Xapian::valueno collapse_key = Xapian::BAD_VALUENO;
-    if (collapse_max) collapse_key = decode_length(&p, p_end, false);
+	if (collapse_max) collapse_key = static_cast<Xapian::valueno>( decode_length(&p, p_end, false) );
 
     if (p_end - p < 4 || *p < '0' || *p > '2') {
 	throw Xapian::NetworkError("bad message (docid_order)");
@@ -387,7 +388,7 @@ RemoteServer::msg_query(const string &message_in)
     Xapian::Enquire::docid_order order;
     order = static_cast<Xapian::Enquire::docid_order>(*p++ - '0');
 
-    Xapian::valueno sort_key = decode_length(&p, p_end, false);
+    Xapian::valueno sort_key = static_cast<Xapian::valueno>( decode_length(&p, p_end, false) );
 
     if (*p < '0' || *p > '3') {
 	throw Xapian::NetworkError("bad message (sort_by)");
@@ -463,11 +464,11 @@ RemoteServer::msg_query(const string &message_in)
     p = message.c_str();
     p_end = p + message.size();
 
-    Xapian::termcount first = decode_length(&p, p_end, false);
-    Xapian::termcount maxitems = decode_length(&p, p_end, false);
+    Xapian::termcount first = static_cast<Xapian::termcount>( decode_length(&p, p_end, false) );
+    Xapian::termcount maxitems = static_cast<Xapian::termcount>( decode_length(&p, p_end, false) );
 
     Xapian::termcount check_at_least = 0;
-    check_at_least = decode_length(&p, p_end, false);
+    check_at_least = static_cast<Xapian::termcount>( decode_length(&p, p_end, false) );
 
     message.erase(0, message.size() - (p_end - p));
     Xapian::Weight::Internal total_stats(unserialise_stats(message));
@@ -492,7 +493,7 @@ RemoteServer::msg_document(const string &message)
 {
     const char *p = message.data();
     const char *p_end = p + message.size();
-    Xapian::docid did = decode_length(&p, p_end, false);
+    Xapian::docid did = static_cast<Xapian::docid>( decode_length(&p, p_end, false) );
 
     Xapian::Document doc = db->get_document(did);
 
@@ -539,7 +540,7 @@ RemoteServer::msg_valuestats(const string & message)
     const char *p = message.data();
     const char *p_end = p + message.size();
     while (p != p_end) {
-	Xapian::valueno slot = decode_length(&p, p_end, false);
+	Xapian::valueno slot = static_cast<Xapian::valueno>( decode_length(&p, p_end, false) );
 	string message_out;
 	message_out += encode_length(db->get_value_freq(slot));
 	string bound = db->get_value_lower_bound(slot);

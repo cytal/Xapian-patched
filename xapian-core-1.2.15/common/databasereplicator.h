@@ -26,6 +26,7 @@
 #include <string>
 
 #include "xapian/types.h"
+#include "xapian/filesystem.h"
 
 class RemoteConnection;
 
@@ -58,7 +59,7 @@ class DatabaseReplicator {
 	 *
 	 *  The type of the database at the path is automatically detected.
 	 */
-	static DatabaseReplicator * open(const std::string & path);
+	static DatabaseReplicator * open(const std::string & path, FileSystem file_system = FileSystem());
 
 	/** Check if the revision of the database is at least that of a target.
 	 *

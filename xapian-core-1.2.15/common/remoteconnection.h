@@ -26,6 +26,8 @@
 #include "remoteprotocol.h"
 #include "safeunistd.h"
 
+#include <xapian/filesystem.h>
+
 #ifdef __WIN32__
 # include "safewinsock2.h"
 
@@ -271,6 +273,7 @@ class RemoteConnection {
      *				never timeout.
      */
     void send_file(char type, int fd, double end_time);
+	void send_file(char type, Xapian::File & fd, double end_time);
 
     /** Shutdown the connection.
      *

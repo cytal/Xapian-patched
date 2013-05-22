@@ -27,7 +27,7 @@
 #include "safeerrno.h"
 
 #include <algorithm>
-#include <fstream>
+#include <sstream>
 
 #include <cstdio> // for rename()
 #include <cstdlib>
@@ -98,7 +98,8 @@ class Compactor::Internal : public Xapian::Internal::RefCntBase {
 
     enum { UNKNOWN, BRASS, CHERT, FLINT } backend;
 
-    struct stat sb;
+    //struct stat sb;
+	Xapian::FileSystem	file_system;
 
     string first_source;
 
@@ -106,10 +107,10 @@ class Compactor::Internal : public Xapian::Internal::RefCntBase {
     vector<Xapian::docid> offset;
     vector<pair<Xapian::docid, Xapian::docid> > used_ranges;
   public:
-    Internal()
+    Internal(Xapian::FileSystem	file_system_)
 	: renumber(true), multipass(false),
 	  block_size(8192), compaction(FULL), tot_off(0),
-	  last_docid(0), backend(UNKNOWN)
+	  last_docid(0), backend(UNKNOWN), file_system(file_system_)
     {
     }
 
@@ -117,10 +118,10 @@ class Compactor::Internal : public Xapian::Internal::RefCntBase {
 
     void add_source(const string & srcdir);
 
-    void compact(Xapian::Compactor & compactor);
+	void compact(Xapian::Compactor & compactor);
 };
 
-Compactor::Compactor() : internal(new Compactor::Internal()) { }
+Compactor::Compactor(Xapian::FileSystem	file_system_) : internal(new Compactor::Internal(file_system_)) { }
 
 Compactor::~Compactor() { }
 
@@ -211,12 +212,14 @@ void
 Compactor::Internal::set_destdir(const string & destdir_) {
     destdir = destdir_;
     compact_to_stub = STUB_NO;
-    if (stat(destdir, &sb) == 0 && S_ISREG(sb.st_mode)) {
-	// Stub file.
-	compact_to_stub = STUB_FILE;
-    } else if (stat(destdir + "/XAPIANDB", &sb) == 0 && S_ISREG(sb.st_mode)) {
-	// Stub directory.
-	compact_to_stub = STUB_DIR;
+
+	Xapian::FileState	file_state;
+	if ( file_system.path_exist( destdir, &file_state ) && file_state.isFile() ) { // exist but not folder
+		// Stub file.
+		compact_to_stub = STUB_FILE;
+	} else if ( file_system.path_exist( destdir + "/XAPIANDB", &file_state ) && file_state.isFile() ) {
+		// Stub directory.
+		compact_to_stub = STUB_DIR;
     }
 }
 
@@ -226,84 +229,92 @@ Compactor::Internal::add_source(const string & srcdir)
     // Check destdir isn't the same as any source directory, unless it is a
     // stub database.
     if (!compact_to_stub && srcdir == destdir) {
-	throw Xapian::InvalidArgumentError("destination may not be the same as any source directory, unless it is a stub database");
+		throw Xapian::InvalidArgumentError("destination may not be the same as any source directory, unless it is a stub database");
     }
 
-    if (stat(srcdir, &sb) == 0) {
-	bool is_stub = false;
-	string file = srcdir;
-	if (S_ISREG(sb.st_mode)) {
-	    // Stub database file.
-	    is_stub = true;
-	} else if (S_ISDIR(sb.st_mode)) {
-	    file += "/XAPIANDB";
-	    if (stat(file.c_str(), &sb) == 0 && S_ISREG(sb.st_mode)) {
-		// Stub database directory.
-		is_stub = true;
-	    }
-	}
-	if (is_stub) {
-	    ifstream stub(file.c_str());
-	    string line;
-	    unsigned int line_no = 0;
-	    while (getline(stub, line)) {
-		++line_no;
-		if (line.empty() || line[0] == '#')
-		    continue;
-		string::size_type space = line.find(' ');
-		if (space == string::npos) space = line.size();
-
-		string type(line, 0, space);
-		line.erase(0, space + 1);
-
-		if (type == "auto" || type == "chert" || type == "flint" ||
-		    type == "brass") {
-		    resolve_relative_path(line, file);
-		    add_source(line);
-		    continue;
+	Xapian::FileState	file_state;
+	if ( file_system.path_exist( srcdir, &file_state ) ) {
+		bool is_stub = false;
+		string file = srcdir;
+		if ( file_state.isFile() ) {
+			// Stub database file.
+			is_stub = true;
+		} else if ( file_state.isDir() ) {
+			file += "/XAPIANDB";
+			if ( file_system.path_exist( file, &file_state ) && file_state.isFile() ) {
+				// Stub database directory.
+				is_stub = true;
+			}
 		}
+		if (is_stub) {
 
-		if (type == "remote" || type == "inmemory") {
-		    string msg = "Can't compact stub entry of type '";
-		    msg += type;
-		    msg += '\'';
-		    throw Xapian::InvalidOperationError(msg);
+			string	file_content;
+			Xapian::File f = file_system.open( file, O_RDONLY | O_BINARY, 0666 );
+			if ( f.is_opened() )
+				f.load_to_string( file_content );
+			f.close();
+
+			stringstream	stub( file_content );
+			string line;
+			unsigned int line_no = 0;
+			while (getline(stub, line)) {
+				++line_no;
+				if (line.empty() || line[0] == '#')
+					continue;
+				string::size_type space = line.find(' ');
+				if (space == string::npos) 
+					space = line.size();
+
+				string type(line, 0, space);
+				line.erase(0, space + 1);
+
+				if (type == "auto" || type == "chert" || type == "flint" ||	type == "brass") {
+					resolve_relative_path(line, file);
+					add_source(line);
+					continue;
+				}
+
+				if (type == "remote" || type == "inmemory") {
+					string msg = "Can't compact stub entry of type '";
+					msg += type;
+					msg += '\'';
+					throw Xapian::InvalidOperationError(msg);
+				}
+
+				throw Xapian::DatabaseError("Bad line in stub file");
+			}
+			return;
 		}
-
-		throw Xapian::DatabaseError("Bad line in stub file");
-	    }
-	    return;
-	}
     }
 
-    if (stat(string(srcdir) + "/iamflint", &sb) == 0) {
-	if (backend == UNKNOWN) {
-	    backend = FLINT;
-	} else if (backend != FLINT) {
-	    backend_mismatch(first_source, backend, srcdir, FLINT);
-	}
-    } else if (stat(string(srcdir) + "/iamchert", &sb) == 0) {
-	if (backend == UNKNOWN) {
-	    backend = CHERT;
-	} else if (backend != CHERT) {
-	    backend_mismatch(first_source, backend, srcdir, CHERT);
-	}
-    } else if (stat(string(srcdir) + "/iambrass", &sb) == 0) {
-	if (backend == UNKNOWN) {
-	    backend = BRASS;
-	} else if (backend != BRASS) {
-	    backend_mismatch(first_source, backend, srcdir, BRASS);
-	}
+	if ( file_system.file_exist( string(srcdir) + "/iamflint" ) ) {
+		if (backend == UNKNOWN) {
+			backend = FLINT;
+		} else if (backend != FLINT) {
+			backend_mismatch(first_source, backend, srcdir, FLINT);
+		}
+    } else if ( file_system.file_exist( string(srcdir) + "/iamchert" ) ) {
+		if (backend == UNKNOWN) {
+		    backend = CHERT;
+		} else if (backend != CHERT) {
+			backend_mismatch(first_source, backend, srcdir, CHERT);
+		}
+    } else if ( file_system.file_exist( string(srcdir) + "/iambrass" ) ) {
+		if (backend == UNKNOWN) {
+		    backend = BRASS;
+		} else if (backend != BRASS) {
+			backend_mismatch(first_source, backend, srcdir, BRASS);
+		}
     } else {
-	string msg = srcdir;
-	msg += ": not a flint, chert or brass database";
-	throw Xapian::InvalidArgumentError(msg);
+		string msg = srcdir;
+		msg += ": not a flint, chert or brass database";
+		throw Xapian::InvalidArgumentError(msg);
     }
 
     if (first_source.empty())
 	first_source = srcdir;
 
-    Xapian::Database db(srcdir);
+    Xapian::Database db(srcdir, file_system);
     Xapian::docid first = 0, last = 0;
 
     // "Empty" databases might have spelling or synonym data so can't
@@ -425,38 +436,41 @@ Compactor::Internal::compact(Xapian::Compactor & compactor)
 	while (true) {
 	    destdir.resize(sfx);
 	    destdir += str(now++);
-	    if (mkdir(destdir, 0755) == 0)
-		break;
-	    if (errno != EEXIST) {
-		string msg = destdir;
-		msg += ": mkdir failed";
-		throw Xapian::DatabaseError(msg, errno);
+		if ( file_system.path_exist( destdir ) )
+			continue;
+		else if ( file_system.make_dir( destdir, 0755 ) )
+			break;
+		else {
+			string msg = destdir;
+			msg += ": mkdir failed";
+			throw Xapian::DatabaseError(msg, errno);
 	    }
 	}
     } else {
 	// If the destination database directory doesn't exist, create it.
-	if (mkdir(destdir, 0755) < 0) {
-	    // Check why mkdir failed.  It's ok if the directory already
-	    // exists, but we also get EEXIST if there's an existing file with
-	    // that name.
-	    if (errno == EEXIST) {
-		if (stat(destdir, &sb) == 0 && S_ISDIR(sb.st_mode))
-		    errno = 0;
-		else
-		    errno = EEXIST; // stat might have changed it
-	    }
-	    if (errno) {
-		string msg = destdir;
-		msg +=  ": cannot create directory";
-		throw Xapian::DatabaseError(msg, errno);
-	    }
-	}
+		if ( !file_system.make_dir( destdir, 0755 ) ) {
+		    // Check why mkdir failed.  It's ok if the directory already
+		    // exists, but we also get EEXIST if there's an existing file with
+			// that name.
+			if (errno == EEXIST) {
+				Xapian::FileState	file_state;
+				if ( file_system.path_exist( destdir, &file_state ) && file_state.isDir() )
+					errno = 0;
+				else
+					errno = EEXIST; // stat might have changed it
+			}
+			if (errno) {
+				string msg = destdir;
+				msg +=  ": cannot create directory";
+				throw Xapian::DatabaseError(msg, errno);
+			}
+		}
     }
 
     if (backend == CHERT) {
 #ifdef XAPIAN_HAS_CHERT_BACKEND
 	compact_chert(compactor, destdir.c_str(), sources, offset, block_size,
-		      compaction, multipass, last_docid);
+		      compaction, multipass, last_docid, file_system);
 #else
 	throw Xapian::FeatureUnavailableError("Chert backend disabled at build time");
 #endif
@@ -482,7 +496,7 @@ Compactor::Internal::compact(Xapian::Compactor & compactor)
     // UUID since its revision counter is reset to 1.
     if (backend == CHERT) {
 #ifdef XAPIAN_HAS_CHERT_BACKEND
-	ChertVersion(destdir).create();
+	ChertVersion(destdir, file_system).create();
 #else
 	// Handled above.
 	exit(1);
@@ -507,19 +521,20 @@ Compactor::Internal::compact(Xapian::Compactor & compactor)
 	string new_stub_file = destdir;
 	new_stub_file += "/new_stub.tmp";
 	{
-	    ofstream new_stub(new_stub_file.c_str());
+	    stringstream new_stub;
 #ifndef __WIN32__
 	    size_t slash = destdir.find_last_of('/');
 #else
 	    size_t slash = destdir.find_last_of("/\\");
 #endif
 	    new_stub << "auto " << destdir.substr(slash + 1) << '\n';
+
+		string res = new_stub.str();
+		Xapian::File f = file_system.open( new_stub_file, O_CREAT | O_WRONLY | O_TRUNC | O_BINARY, 0666 );
+		if ( f.is_opened() )
+			f.io_write( res.data(), res.size() );
 	}
-#ifndef __WIN32__
-	if (rename(new_stub_file.c_str(), stub_file.c_str()) < 0) {
-#else
-	if (msvc_posix_rename(new_stub_file.c_str(), stub_file.c_str()) < 0) {
-#endif
+	if ( !file_system.rename( new_stub_file, stub_file ) ) {
 	    // FIXME: try to clean up?
 	    string msg = "Cannot rename '";
 	    msg += new_stub_file;

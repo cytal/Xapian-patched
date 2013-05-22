@@ -25,6 +25,7 @@
 #include <string>
 
 #include <xapian/visibility.h>
+#include <xapian/filesystem.h>
 
 #include "chert_types.h"
 
@@ -47,7 +48,7 @@ class XAPIAN_VISIBILITY_DEFAULT ChertTable_base {
 	 *
 	 *  @return	true if the read succeeded, or false otherwise.
 	 */
-	bool read(const std::string &name, char ch, bool read_bitmap,
+	bool read(const std::string &name, Xapian::FileSystem & file_system, char ch, bool read_bitmap,
 		  std::string &err_msg);
 
 	uint4 get_revision() const { return revision; }
@@ -84,10 +85,11 @@ class XAPIAN_VISIBILITY_DEFAULT ChertTable_base {
 
 	/** Write the btree base file to disk. */
 	void write_to_file(const std::string &filename,
-			   char base_letter,
-			   const std::string &tablename,
-			   int changes_fd,
-			   const std::string * changes_tail);
+		char base_letter,
+		const std::string &tablename,
+		Xapian::File & changes_file,
+		Xapian::FileSystem & file_system,
+		const std::string * changes_tail);
 
 	/* Methods dealing with the bitmap */
 	/** true iff block n was free at the start of the transaction on

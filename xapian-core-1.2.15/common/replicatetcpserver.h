@@ -30,6 +30,7 @@
 class XAPIAN_VISIBILITY_DEFAULT ReplicateTcpServer : public TcpServer {
     /// The path to pass to DatabaseMaster.
     std::string path;
+	Xapian::FileSystem file_system;
 
   public:
     /** Construct a ReplicateTcpServer and start listening for connections.
@@ -40,7 +41,7 @@ class XAPIAN_VISIBILITY_DEFAULT ReplicateTcpServer : public TcpServer {
      *  @param path_	The path to the parent directory of the databases.
      */
     ReplicateTcpServer(const std::string & host, int port,
-		       const std::string & path_);
+			const std::string & path_, Xapian::FileSystem file_system_ = Xapian::FileSystem() );
 
     /// Destructor.
     ~ReplicateTcpServer();

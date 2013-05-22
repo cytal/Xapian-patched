@@ -42,13 +42,14 @@
 #include "safeerrno.h"
 #include "safesysstat.h"
 #include "safeunistd.h"
+#include "safefcntl.h"
 #include "serialise.h"
 #include "str.h"
 #include "utils.h"
 
 #include "autoptr.h"
 #include <cstdio> // For rename().
-#include <fstream>
+#include <sstream>
 #include <string>
 
 using namespace std;
@@ -69,7 +70,7 @@ DatabaseMaster::write_changesets_to_fd(int fd,
 	info->clear();
     Database db;
     try {
-	db = Database(path);
+	db = Database(path, file_system);
     } catch (const Xapian::DatabaseError & e) {
 	RemoteConnection conn(-1, fd);
 	conn.send_message(REPL_REPLY_FAIL,
@@ -161,6 +162,7 @@ class DatabaseReplica::Internal : public Xapian::Internal::RefCntBase {
     /// The remote connection we're using.
     RemoteConnection * conn;
 
+	mutable FileSystem	file_system;
     /** Update the stub database which points to a single database.
      *
      *  The stub database file is created at a separate path, and then
@@ -199,7 +201,7 @@ class DatabaseReplica::Internal : public Xapian::Internal::RefCntBase {
 
   public:
     /// Open a new DatabaseReplica::Internal for the specified path.
-    Internal(const string & path_);
+    Internal(const string & path_, FileSystem file_system);
 
     /// Destructor.
     ~Internal() { delete conn; }
@@ -239,8 +241,8 @@ DatabaseReplica::DatabaseReplica()
     LOGCALL_CTOR(REPLICA, "DatabaseReplica", NO_ARGS);
 }
 
-DatabaseReplica::DatabaseReplica(const string & path)
-	: internal(new DatabaseReplica::Internal(path))
+DatabaseReplica::DatabaseReplica(const string & path, FileSystem file_system_)
+	: internal(new DatabaseReplica::Internal(path, file_system_))
 {
     LOGCALL_CTOR(REPLICA, "DatabaseReplica", path);
 }
@@ -308,33 +310,32 @@ DatabaseReplica::Internal::update_stub_database() const
     string tmp_path = stub_path;
     tmp_path += ".tmp";
     {
-	ofstream stub(tmp_path.c_str());
-	stub << REPLICA_STUB_BANNER
-		"auto replica_" << live_id << endl;
+		stringstream stub;
+		stub << REPLICA_STUB_BANNER
+			"auto replica_" << live_id << endl;
+		Xapian::File	f = file_system.open( tmp_path, O_WRONLY | O_CREAT | O_TRUNC | O_BINARY, 0666 );
+		if ( f.is_opened() ) {
+			string res = stub.str();
+			f.io_write( res.data(), res.size() );
+		}
     }
-    int result;
-#ifdef __WIN32__
-    result = msvc_posix_rename(tmp_path.c_str(), stub_path.c_str());
-#else
-    result = rename(tmp_path.c_str(), stub_path.c_str());
-#endif
-    if (result == -1) {
-	string msg("Failed to update stub db file for replica: ");
-	msg += path;
-	throw Xapian::DatabaseOpeningError(msg);
+	if ( !file_system.rename( tmp_path, stub_path ) ) {
+		string msg("Failed to update stub db file for replica: ");
+		msg += path;
+		throw Xapian::DatabaseOpeningError(msg);
     }
 }
 
-DatabaseReplica::Internal::Internal(const string & path_)
+DatabaseReplica::Internal::Internal(const string & path_, FileSystem file_system_)
 	: path(path_), live_id(0), live_db(), have_offline_db(false),
 	  need_copy_next(false), offline_revision(), offline_needed_revision(),
-	  last_live_changeset_time(), conn(NULL)
+	  last_live_changeset_time(), conn(NULL), file_system( file_system_ )
 {
     LOGCALL_CTOR(REPLICA, "DatabaseReplica::Internal", path_);
 #if ! defined XAPIAN_HAS_FLINT_BACKEND && ! defined XAPIAN_HAS_CHERT_BACKEND
     throw FeatureUnavailableError("Replication requires the Flint or Chert backend to be enabled");
 #else
-    if (mkdir(path, 0777) == 0) {
+	if ( file_system.make_dir( path, 0777 ) ) {
 	// The database doesn't already exist - make a directory, containing a
 	// stub database, and point it to a new database.
 	//
@@ -342,7 +343,7 @@ DatabaseReplica::Internal::Internal(const string & path_)
 	// master is a different type, then the replica will become that type
 	// automatically.
 	live_db = WritableDatabase(get_replica_path(live_id),
-				   Xapian::DB_CREATE);
+				   Xapian::DB_CREATE, file_system);
 	update_stub_database();
     } else {
 	if (errno != EEXIST) {
@@ -353,9 +354,11 @@ DatabaseReplica::Internal::Internal(const string & path_)
 	}
 	string stub_path = path;
 	stub_path += "/XAPIANDB";
-	live_db = Auto::open_stub(stub_path, Xapian::DB_OPEN);
+	live_db = Auto::open_stub(stub_path, Xapian::DB_OPEN, file_system);
 	// FIXME: simplify all this?
-	ifstream stub(stub_path.c_str());
+	string file_content;
+	file_system.load_file_to_string( stub_path, file_content );
+	stringstream stub( file_content );
 	string line;
 	while (getline(stub, line)) {
 	    if (!line.empty() && line[0] != '#') {
@@ -372,7 +375,7 @@ DatabaseReplica::Internal::get_revision_info() const
 {
     LOGCALL(REPLICA, string, "DatabaseReplica::Internal::get_revision_info", NO_ARGS);
     if (live_db.internal.empty())
-	live_db = WritableDatabase(get_replica_path(live_id), Xapian::DB_OPEN);
+	live_db = WritableDatabase(get_replica_path(live_id), Xapian::DB_OPEN, file_system);
     if (live_db.internal.size() != 1)
 	throw Xapian::InvalidOperationError("DatabaseReplica needs to be pointed at exactly one subdatabase");
 
@@ -402,9 +405,9 @@ DatabaseReplica::Internal::apply_db_copy(double end_time)
     // could be made live, and the remote end was then unable to send those
     // updates (probably due to not having changesets available, or the remote
     // database being replaced by a new database).
-    removedir(offline_path);
-    if (mkdir(offline_path, 0777)) {
-	throw Xapian::DatabaseError("Cannot make directory '" +
+	file_system.remove_dir(offline_path);
+    if ( !file_system.make_dir(offline_path, 0777)) {
+		throw Xapian::DatabaseError("Cannot make directory '" +
 				    offline_path + "'", errno);
     }
 
@@ -466,7 +469,7 @@ DatabaseReplica::Internal::possibly_make_offline_live()
     string replica_path(get_replica_path(live_id ^ 1));
     AutoPtr<DatabaseReplicator> replicator;
     try {
-	replicator.reset(DatabaseReplicator::open(replica_path));
+	replicator.reset(DatabaseReplicator::open(replica_path, file_system));
     } catch (const Xapian::DatabaseError &) {
 	return false;
     }
@@ -490,7 +493,7 @@ DatabaseReplica::Internal::possibly_make_offline_live()
     live_id ^= 1;
     // Open the database first, so that if there's a problem, an exception
     // will be thrown before we make the new database live.
-    live_db = WritableDatabase(replica_path, Xapian::DB_OPEN);
+    live_db = WritableDatabase(replica_path, Xapian::DB_OPEN, file_system);
     update_stub_database();
     remove_offline_db();
     return true;
@@ -510,7 +513,7 @@ DatabaseReplica::Internal::apply_next_changeset(ReplicationInfo * info,
 {
     LOGCALL(REPLICA, bool, "DatabaseReplica::Internal::apply_next_changeset", info | reader_close_time);
     if (live_db.internal.empty())
-	live_db = WritableDatabase(get_replica_path(live_id), Xapian::DB_OPEN);
+	live_db = WritableDatabase(get_replica_path(live_id), Xapian::DB_OPEN, file_system);
     if (live_db.internal.size() != 1)
 	throw Xapian::InvalidOperationError("DatabaseReplica needs to be pointed at exactly one subdatabase");
 
@@ -531,7 +534,7 @@ DatabaseReplica::Internal::apply_next_changeset(ReplicationInfo * info,
 		    string replica_uuid;
 		    {
 			AutoPtr<DatabaseReplicator> replicator(
-				DatabaseReplicator::open(get_replica_path(live_id ^ 1)));
+				DatabaseReplicator::open(get_replica_path(live_id ^ 1), file_system));
 			replica_uuid = replicator->get_uuid();
 		    }
 		    if (replica_uuid != offline_uuid) {
@@ -575,7 +578,7 @@ DatabaseReplica::Internal::apply_next_changeset(ReplicationInfo * info,
 		    // changeset.
 		    {
 			AutoPtr<DatabaseReplicator> replicator(
-				DatabaseReplicator::open(replica_path));
+				DatabaseReplicator::open(replica_path, file_system));
 
 			// Ignore the returned revision number, since we are
 			// live so the changeset must be safe to apply to a
@@ -589,13 +592,13 @@ DatabaseReplica::Internal::apply_next_changeset(ReplicationInfo * info,
 			info->changed = true;
 		    }
 		    // Now the replicator is closed, open the live db again.
-		    live_db = WritableDatabase(replica_path, Xapian::DB_OPEN);
+		    live_db = WritableDatabase(replica_path, Xapian::DB_OPEN, file_system);
 		    RETURN(true);
 		}
 
 		{
 		    AutoPtr<DatabaseReplicator> replicator(
-			    DatabaseReplicator::open(get_replica_path(live_id ^ 1)));
+			    DatabaseReplicator::open(get_replica_path(live_id ^ 1), file_system));
 
 		    offline_revision = replicator->
 			    apply_changeset_from_conn(*conn, 0.0, false);

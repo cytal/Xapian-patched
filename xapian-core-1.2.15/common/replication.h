@@ -25,6 +25,7 @@
 
 #include "xapian/base.h"
 #include "xapian/visibility.h"
+#include "xapian/filesystem.h"
 
 #include <string>
 
@@ -62,14 +63,14 @@ struct XAPIAN_VISIBILITY_DEFAULT ReplicationInfo {
 class XAPIAN_VISIBILITY_DEFAULT DatabaseMaster {
     /// The path to the master database.
     std::string path;
-
+	Xapian::FileSystem	file_system;
   public:
     /** Create a new DatabaseMaster for the database at the specified path.
      *
      *  The database isn't actually opened until a set of changesets is
      *  requested.
      */
-    DatabaseMaster(const std::string & path_) : path(path_) {}
+	DatabaseMaster(const std::string & path_, Xapian::FileSystem file_system_ = Xapian::FileSystem() ) : path(path_), file_system(file_system_) {}
 
     /** Write a set of changesets for upgrading the database to a file.
      *
@@ -143,7 +144,7 @@ class XAPIAN_VISIBILITY_DEFAULT DatabaseReplica {
      *
      *  @param path       The path to make the replica at.
      */
-    DatabaseReplica(const std::string & path);
+	DatabaseReplica(const std::string & path, FileSystem file_system = FileSystem() );
 
     /** Get a string describing the current revision of the replica.
      *

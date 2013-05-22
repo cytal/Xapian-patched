@@ -48,9 +48,9 @@ class ChertTermListTable : public ChertLazyTable {
      *  @param dbdir	    The directory the chert database is stored in.
      *  @param readonly	    true if we're opening read-only, else false.
      */
-    ChertTermListTable(const std::string & dbdir, bool readonly)
+	ChertTermListTable(const std::string & dbdir, bool readonly, Xapian::FileSystem file_system_)
 	: ChertLazyTable("termlist", dbdir + "/termlist.", readonly,
-			 Z_DEFAULT_STRATEGY) { }
+			 Z_DEFAULT_STRATEGY, file_system_) { }
 
     /** Set the termlist data for document @a did.
      *

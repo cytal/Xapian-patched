@@ -103,18 +103,18 @@ const int MAX_OPEN_RETRIES = 100;
  * to the tables.
  */
 ChertDatabase::ChertDatabase(const string &chert_dir, int action,
-			     unsigned int block_size)
-	: db_dir(chert_dir),
+							 unsigned int block_size , Xapian::FileSystem file_system_ )
+	: db_dir(chert_dir), file_system( file_system_ ),
 	  readonly(action == XAPIAN_DB_READONLY),
-	  version_file(db_dir),
-	  postlist_table(db_dir, readonly),
-	  position_table(db_dir, readonly),
-	  termlist_table(db_dir, readonly),
+	  version_file(db_dir, file_system_),
+	  postlist_table(db_dir, readonly, file_system_),
+	  position_table(db_dir, readonly, file_system_),
+	  termlist_table(db_dir, readonly, file_system_),
 	  value_manager(&postlist_table, &termlist_table),
-	  synonym_table(db_dir, readonly),
-	  spelling_table(db_dir, readonly),
-	  record_table(db_dir, readonly),
-	  lock(db_dir),
+	  synonym_table(db_dir, readonly, file_system_),
+	  spelling_table(db_dir, readonly, file_system_),
+	  record_table(db_dir, readonly, file_system_),
+	  lock(db_dir + "/flintlock" , file_system_),
 	  max_changesets(0)
 {
     LOGCALL_CTOR(DB, "ChertDatabase", chert_dir | action | block_size);
@@ -128,14 +128,7 @@ ChertDatabase::ChertDatabase(const string &chert_dir, int action,
 
 	// Create the directory for the database, if it doesn't exist
 	// already.
-	bool fail = false;
-	struct stat statbuf;
-	if (stat(db_dir, &statbuf) == 0) {
-	    if (!S_ISDIR(statbuf.st_mode)) fail = true;
-	} else if (errno != ENOENT || mkdir(db_dir, 0755) == -1) {
-	    fail = true;
-	}
-	if (fail) {
+	if ( !file_system.make_dir( db_dir, 0755 ) ) {
 	    throw Xapian::DatabaseCreateError("Cannot create directory `" +
 					      db_dir + "'", errno);
 	}
@@ -337,15 +330,8 @@ ChertDatabase::get_changeset_revisions(const string & path,
 				       chert_revision_number_t * startrev,
 				       chert_revision_number_t * endrev) const
 {
-    int changes_fd = -1;
-#ifdef __WIN32__
-    changes_fd = msvc_posix_open(path.c_str(), O_RDONLY | O_BINARY);
-#else
-    changes_fd = open(path.c_str(), O_RDONLY | O_BINARY);
-#endif
-    fdcloser closer(changes_fd);
-
-    if (changes_fd < 0) {
+	Xapian::File changes_fd = file_system.open( path, O_RDONLY | O_BINARY, 0666 );
+	if ( !changes_fd.is_opened() ) {
 	string message = string("Couldn't open changeset ")
 		+ path + " to read";
 	throw Xapian::DatabaseError(message, errno);
@@ -353,7 +339,7 @@ ChertDatabase::get_changeset_revisions(const string & path,
 
     char buf[REASONABLE_CHANGESET_SIZE];
     const char *start = buf;
-    const char *end = buf + io_read(changes_fd, buf,
+    const char *end = buf + changes_fd.io_read( buf,
 				    REASONABLE_CHANGESET_SIZE, 0);
     if (strncmp(start, CHANGES_MAGIC_STRING,
 		CONST_STRLEN(CHANGES_MAGIC_STRING)) != 0) {
@@ -396,84 +382,80 @@ ChertDatabase::set_revision_number(chert_revision_number_t new_revision)
     spelling_table.flush_db();
     record_table.flush_db();
 
-    int changes_fd = -1;
+    //int changes_fd = -1;
     string changes_name;
+	Xapian::File	changes_file;
 
     const char *p = getenv("XAPIAN_MAX_CHANGESETS");
     if (p) {
-	max_changesets = atoi(p);
+		max_changesets = atoi(p);
     } else {
-	max_changesets = 0;
+		max_changesets = 0;
     }
  
     if (max_changesets > 0) {
-	chert_revision_number_t old_revision = get_revision_number();
-	if (old_revision) {
-	    // Don't generate a changeset for the first revision.
-	    changes_fd = create_changeset_file(db_dir,
-					       "/changes" + str(old_revision),
-					       changes_name);
-	}
+		chert_revision_number_t old_revision = get_revision_number();
+		if (old_revision) {
+			// Don't generate a changeset for the first revision.
+			changes_file = file_system.create_changeset_file( db_dir, std::string("changes") + str(old_revision), changes_name );
+		}
     }
 
     try {
-	fdcloser closefd(changes_fd);
-	if (changes_fd >= 0) {
-	    string buf;
-	    chert_revision_number_t old_revision = get_revision_number();
-	    buf += CHANGES_MAGIC_STRING;
-	    pack_uint(buf, CHANGES_VERSION);
-	    pack_uint(buf, old_revision);
-	    pack_uint(buf, new_revision);
+		if ( changes_file.is_opened() ) {
+			string buf;
+			chert_revision_number_t old_revision = get_revision_number();
+			buf += CHANGES_MAGIC_STRING;
+			pack_uint(buf, CHANGES_VERSION);
+			pack_uint(buf, old_revision);
+			pack_uint(buf, new_revision);
 
 #ifndef DANGEROUS
-	    buf += '\x00'; // Changes can be applied to a live database.
+			buf += '\x00'; // Changes can be applied to a live database.
 #else
-	    buf += '\x01';
+			buf += '\x01';
 #endif
+			changes_file.io_write( buf.data(), buf.size() );
 
-	    io_write(changes_fd, buf.data(), buf.size());
-
-	    // Write the changes to the blocks in the tables.  Do the postlist
-	    // table last, so that ends up cached the most, if the cache
-	    // available is limited.  Do the position table just before that
-	    // as having that cached will also improve search performance.
-	    termlist_table.write_changed_blocks(changes_fd);
-	    synonym_table.write_changed_blocks(changes_fd);
-	    spelling_table.write_changed_blocks(changes_fd);
-	    record_table.write_changed_blocks(changes_fd);
-	    position_table.write_changed_blocks(changes_fd);
-	    postlist_table.write_changed_blocks(changes_fd);
+			// Write the changes to the blocks in the tables.  Do the postlist
+			// table last, so that ends up cached the most, if the cache
+			// available is limited.  Do the position table just before that
+			// as having that cached will also improve search performance.
+			termlist_table.write_changed_blocks(changes_file);
+			synonym_table.write_changed_blocks(changes_file);
+			spelling_table.write_changed_blocks(changes_file);
+			record_table.write_changed_blocks(changes_file);
+			position_table.write_changed_blocks(changes_file);
+			postlist_table.write_changed_blocks(changes_file);
 	}
 
-	postlist_table.commit(new_revision, changes_fd);
-	position_table.commit(new_revision, changes_fd);
-	termlist_table.commit(new_revision, changes_fd);
-	synonym_table.commit(new_revision, changes_fd);
-	spelling_table.commit(new_revision, changes_fd);
+	postlist_table.commit(new_revision, changes_file);
+	position_table.commit(new_revision, changes_file);
+	termlist_table.commit(new_revision, changes_file);
+	synonym_table.commit(new_revision, changes_file);
+	spelling_table.commit(new_revision, changes_file);
 
 	string changes_tail; // Data to be appended to the changes file
-	if (changes_fd >= 0) {
+	if ( changes_file.is_opened() ) {
 	    changes_tail += '\0';
 	    pack_uint(changes_tail, new_revision);
 	}
-	record_table.commit(new_revision, changes_fd, &changes_tail);
+	record_table.commit(new_revision, changes_file, &changes_tail);
 
     } catch (...) {
-	// Remove the changeset, if there was one.
-	if (changes_fd >= 0) {
-	    (void)io_unlink(changes_name);
-	}
-
-	throw;
+		// Remove the changeset, if there was one.
+		if ( changes_file.is_opened() ) {
+			file_system.unlink( changes_name );
+		}
+		throw;
     }
     
-    if (changes_fd >= 0 && max_changesets < new_revision) {
-	// While change sets less than N - max_changesets exist, delete them
-	// 1 must be subtracted so we don't delete the changeset we just wrote
-	// when max_changesets = 1
-	unsigned rev = new_revision - max_changesets - 1;
-	while (io_unlink(db_dir + "/changes" + str(rev--))) { }
+	if ( changes_file.is_opened() && max_changesets < new_revision) {
+		// While change sets less than N - max_changesets exist, delete them
+		// 1 must be subtracted so we don't delete the changeset we just wrote
+		// when max_changesets = 1
+		unsigned rev = new_revision - max_changesets - 1;
+		while ( file_system.unlink( db_dir + "/changes" + str(rev--)) ) { }
     }
 }
 
@@ -502,9 +484,9 @@ ChertDatabase::get_database_write_lock(bool creating)
 {
     LOGCALL_VOID(DB, "ChertDatabase::get_database_write_lock", creating);
     string explanation;
-    FlintLock::reason why = lock.lock(true, explanation);
-    if (why != FlintLock::SUCCESS) {
-	if (why == FlintLock::UNKNOWN && !creating && !database_exists()) {
+	Xapian::FileSystem::reason why = lock.lock(true, explanation);
+    if (why != Xapian::FileSystem::SUCCESS) {
+	if (why == Xapian::FileSystem::UNKNOWN && !creating && !database_exists()) {
 	    string msg("No chert database found at path `");
 	    msg += db_dir;
 	    msg += '\'';
@@ -540,18 +522,13 @@ ChertDatabase::send_whole_database(RemoteConnection & conn, double end_time)
     string filepath = db_dir;
     filepath += '/';
     for (const char * p = filenames; *p; p += *p + 1) {
-	string leaf(p + 1, size_t(static_cast<unsigned char>(*p)));
-	filepath.replace(db_dir.size() + 1, string::npos, leaf);
-#ifdef __WIN32__
-	int fd = msvc_posix_open(filepath.c_str(), O_RDONLY | O_BINARY);
-#else
-	int fd = open(filepath.c_str(), O_RDONLY | O_BINARY);
-#endif
-	if (fd >= 0) {
-	    fdcloser closefd(fd);
-	    conn.send_message(REPL_REPLY_DB_FILENAME, leaf, end_time);
-	    conn.send_file(REPL_REPLY_DB_FILEDATA, fd, end_time);
-	}
+		string leaf(p + 1, size_t(static_cast<unsigned char>(*p)));
+		filepath.replace(db_dir.size() + 1, string::npos, leaf);
+		Xapian::File fd = file_system.open( filepath, O_RDONLY | O_BINARY, 0666 );
+		if ( fd.is_opened() ) {
+			conn.send_message(REPL_REPLY_DB_FILENAME, leaf, end_time);
+			conn.send_file(REPL_REPLY_DB_FILEDATA, fd, end_time);
+		}
     }
 }
 
@@ -647,13 +624,9 @@ ChertDatabase::write_changesets_to_fd(int fd,
 
 	    // Look for the changeset for revision start_rev_num.
 	    string changes_name = db_dir + "/changes" + str(start_rev_num);
-#ifdef __WIN32__
-	    int fd_changes = msvc_posix_open(changes_name.c_str(), O_RDONLY | O_BINARY);
-#else
-	    int fd_changes = open(changes_name.c_str(), O_RDONLY | O_BINARY);
-#endif
-	    if (fd_changes >= 0) {
-		fdcloser closefd(fd_changes);
+		Xapian::File fd_changes = file_system.open( changes_name, O_RDONLY | O_BINARY, 0666 );
+
+	    if ( fd_changes.is_opened() ) {
 
 		// Send it, and also update start_rev_num to the new value
 		// specified in the changeset.
@@ -849,7 +822,7 @@ ChertDatabase::get_doclength_upper_bound() const
 Xapian::termcount
 ChertDatabase::get_wdf_upper_bound(const string & term) const
 {
-    return min(get_collection_freq(term), stats.get_wdf_upper_bound());
+    return static_cast<Xapian::termcount>( min(get_collection_freq(term), stats.get_wdf_upper_bound()) );
 }
 
 bool
@@ -1025,8 +998,8 @@ ChertDatabase::throw_termlist_table_close_exception() const
 ///////////////////////////////////////////////////////////////////////////
 
 ChertWritableDatabase::ChertWritableDatabase(const string &dir, int action,
-					       int block_size)
-	: ChertDatabase(dir, action, block_size),
+					       int block_size, Xapian::FileSystem file_system_)
+	: ChertDatabase(dir, action, block_size, file_system_),
 	  freq_deltas(),
 	  doclens(),
 	  mod_plists(),

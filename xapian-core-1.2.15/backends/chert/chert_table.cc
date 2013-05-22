@@ -195,40 +195,13 @@ ChertTable::read_block(uint4 n, byte * p) const
      */
     Assert(n / CHAR_BIT < base.get_bit_map_size());
 
-#ifdef HAVE_PREAD
-    off_t offset = off_t(block_size) * n;
-    int m = block_size;
-    while (true) {
-	ssize_t bytes_read = pread(handle, reinterpret_cast<char *>(p), m,
-				   offset);
-	// normal case - read succeeded, so return.
-	if (bytes_read == m) return;
-	if (bytes_read == -1) {
-	    if (errno == EINTR) continue;
-	    string message = "Error reading block " + str(n) + ": ";
-	    message += strerror(errno);
-	    throw Xapian::DatabaseError(message);
-	} else if (bytes_read == 0) {
-	    string message = "Error reading block " + str(n) + ": got end of file";
-	    throw Xapian::DatabaseError(message);
-	} else if (bytes_read < m) {
-	    /* Read part of the block, which is not an error.  We should
-	     * continue reading the rest of the block.
-	     */
-	    m -= int(bytes_read);
-	    p += bytes_read;
-	    offset += bytes_read;
+	off_t offset = off_t(block_size) * n;
+	if ( file_handle.seek( offset ,SEEK_SET ) == -1 ){
+		string message = "Error seeking to block: ";
+		message += strerror(errno);
+		throw Xapian::DatabaseError(message);
 	}
-    }
-#else
-    if (lseek(handle, off_t(block_size) * n, SEEK_SET) == -1) {
-	string message = "Error seeking to block: ";
-	message += strerror(errno);
-	throw Xapian::DatabaseError(message);
-    }
-
-    io_read(handle, reinterpret_cast<char *>(p), block_size, block_size);
-#endif
+	file_handle.io_read( reinterpret_cast<char *>(p), block_size, block_size);
 }
 
 /** write_block(n, p) writes block n in the DB file from address p.
@@ -259,45 +232,18 @@ ChertTable::write_block(uint4 n, const byte * p) const
 	// case is unhelpful, since we wanted the file gone anyway!  The
 	// likely explanation is that somebody moved, deleted, or changed a
 	// symlink to the database directory.
-	(void)io_unlink(name + "base" + other_base_letter());
+		file_system.unlink( name + "base" + other_base_letter() );
 	both_bases = false;
 	latest_revision_number = revision_number;
     }
 
-#ifdef HAVE_PWRITE
-    off_t offset = off_t(block_size) * n;
-    int m = block_size;
-    while (true) {
-	ssize_t bytes_written = pwrite(handle, p, m, offset);
-	if (bytes_written == m) {
-	    // normal case - write succeeded, so return.
-	    return;
-	} else if (bytes_written == -1) {
-	    if (errno == EINTR) continue;
-	    string message = "Error writing block: ";
-	    message += strerror(errno);
-	    throw Xapian::DatabaseError(message);
-	} else if (bytes_written == 0) {
-	    string message = "Error writing block: wrote no data";
-	    throw Xapian::DatabaseError(message);
-	} else if (bytes_written < m) {
-	    /* Wrote part of the block, which is not an error.  We should
-	     * continue writing the rest of the block.
-	     */
-	    m -= bytes_written;
-	    p += bytes_written;
-	    offset += bytes_written;
+	off_t offset = off_t(block_size) * n;
+	if ( file_handle.seek( offset, SEEK_SET) == -1) {
+		string message = "Error seeking to block: ";
+		message += strerror(errno);
+		throw Xapian::DatabaseError(message);
 	}
-    }
-#else
-    if (lseek(handle, (off_t)block_size * n, SEEK_SET) == -1) {
-	string message = "Error seeking to block: ";
-	message += strerror(errno);
-	throw Xapian::DatabaseError(message);
-    }
-
-    io_write(handle, reinterpret_cast<const char *>(p), block_size);
-#endif
+	file_handle.io_write( reinterpret_cast<const char *>(p), block_size);
 }
 
 
@@ -1021,7 +967,7 @@ ChertTable::add(const string &key, string tag, bool already_compressed)
     LOGCALL_VOID(DB, "ChertTable::add", key | tag | already_compressed);
     Assert(writable);
 
-    if (handle < 0) create_and_open(block_size);
+	if ( !file_handle.is_opened() ) create_and_open(block_size);
 
     form_key(key);
 
@@ -1143,11 +1089,11 @@ ChertTable::del(const string &key)
     LOGCALL(DB, bool, "ChertTable::del", key);
     Assert(writable);
 
-    if (handle < 0) {
-	if (handle == -2) {
-	    ChertTable::throw_database_closed();
-	}
-	RETURN(false);
+	if ( !file_handle.is_opened() ) {
+		if (database_shutdown) {
+			ChertTable::throw_database_closed();
+		}
+		RETURN(false);
     }
 
     // We can't delete a key which we is too long for us to store.
@@ -1179,12 +1125,12 @@ ChertTable::get_exact_entry(const string &key, string & tag) const
     LOGCALL(DB, bool, "ChertTable::get_exact_entry", key | tag);
     Assert(!key.empty());
 
-    if (handle < 0) {
-	if (handle == -2) {
-	    ChertTable::throw_database_closed();
+	if ( !file_handle.is_opened() ) {
+		if (database_shutdown) {
+			ChertTable::throw_database_closed();
+		}
+		RETURN(false);
 	}
-	RETURN(false);
-    }
 
     // An oversized key can't exist, so attempting to search for it should fail.
     if (key.size() > CHERT_BTREE_MAX_KEY_LEN) RETURN(false);
@@ -1306,12 +1252,14 @@ ChertTable::set_full_compaction(bool parity)
 
 ChertCursor * ChertTable::cursor_get() const {
     LOGCALL(DB, ChertCursor *, "ChertTable::cursor_get", NO_ARGS);
-    if (handle < 0) {
-	if (handle == -2) {
-	    ChertTable::throw_database_closed();
+
+	if ( !file_handle.is_opened() ) {
+		if (database_shutdown) {
+			ChertTable::throw_database_closed();
+		}
+		RETURN(NULL);
 	}
-	RETURN(NULL);
-    }
+
     // FIXME Ick - casting away const is nasty
     RETURN(new ChertCursor(const_cast<ChertTable *>(this)));
 }
@@ -1336,7 +1284,7 @@ ChertTable::basic_open(bool revision_supplied, chert_revision_number_t revision_
 	bool valid_base = false;
 	{
 	    for (size_t i = 0; i < BTREE_BASES; ++i) {
-		bool ok = bases[i].read(name, basenames[i], writable, err_msg);
+		bool ok = bases[i].read(name, file_system, basenames[i], writable, err_msg);
 		base_ok[i] = ok;
 		if (ok) {
 		    valid_base = true;
@@ -1347,9 +1295,8 @@ ChertTable::basic_open(bool revision_supplied, chert_revision_number_t revision_
 	}
 
 	if (!valid_base) {
-	    if (handle >= 0) {
-		::close(handle);
-		handle = -1;
+		if ( file_handle.is_opened() ) {
+			file_handle.close();
 	    }
 	    string message = "Error opening table `";
 	    message += name;
@@ -1493,31 +1440,31 @@ ChertTable::do_open_to_write(bool revision_supplied,
 			     bool create_db)
 {
     LOGCALL(DB, bool, "ChertTable::do_open_to_write", revision_supplied | revision_ | create_db);
-    if (handle == -2) {
-	ChertTable::throw_database_closed();
+	if ( database_shutdown ) {
+    	ChertTable::throw_database_closed();
     }
     int flags = O_RDWR | O_BINARY;
     if (create_db) flags |= O_CREAT | O_TRUNC;
-    handle = ::open((name + "DB").c_str(), flags, 0666);
-    if (handle < 0) {
-	// lazy doesn't make a lot of sense with create_db anyway, but ENOENT
-	// with O_CREAT means a parent directory doesn't exist.
-	if (lazy && !create_db && errno == ENOENT) {
-	    revision_number = revision_;
-	    RETURN(true);
-	}
-	string message(create_db ? "Couldn't create " : "Couldn't open ");
-	message += name;
-	message += "DB read/write: ";
-	message += strerror(errno);
-	throw Xapian::DatabaseOpeningError(message);
+
+	file_handle = file_system.open( name + "DB", flags, 0666 );
+	if ( !file_handle.is_opened() ) {
+    	// lazy doesn't make a lot of sense with create_db anyway, but ENOENT
+		// with O_CREAT means a parent directory doesn't exist.
+		if (lazy && !create_db && errno == ENOENT) {
+			revision_number = revision_;
+			RETURN(true);
+		}
+		string message(create_db ? "Couldn't create " : "Couldn't open ");
+		message += name;
+		message += "DB read/write: ";
+		message += strerror(errno);
+		throw Xapian::DatabaseOpeningError(message);
     }
 
     if (!basic_open(revision_supplied, revision_)) {
-	::close(handle);
-	handle = -1;
-	if (!revision_supplied) {
-	    throw Xapian::DatabaseOpeningError("Failed to open for writing");
+		file_handle.close();
+		if (!revision_supplied) {
+			throw Xapian::DatabaseOpeningError("Failed to open for writing");
 	}
 	/* When the revision is supplied, it's not an exceptional
 	 * case when open failed, so we just return false here.
@@ -1550,7 +1497,7 @@ ChertTable::do_open_to_write(bool revision_supplied,
 }
 
 ChertTable::ChertTable(const char * tablename_, const string & path_,
-		       bool readonly_, int compress_strategy_, bool lazy_)
+					   bool readonly_, int compress_strategy_, bool lazy_, Xapian::FileSystem file_system_)
 	: tablename(tablename_),
 	  revision_number(0),
 	  item_count(0),
@@ -1560,7 +1507,8 @@ ChertTable::ChertTable(const char * tablename_, const string & path_,
 	  base_letter('A'),
 	  faked_root_block(true),
 	  sequential(true),
-	  handle(-1),
+	  file_system(file_system_),
+	  database_shutdown(false),
 	  level(0),
 	  root(0),
 	  kt(0),
@@ -1588,11 +1536,11 @@ ChertTable::ChertTable(const char * tablename_, const string & path_,
 bool
 ChertTable::really_empty() const
 {
-    if (handle < 0) {
-	if (handle == -2) {
-	    ChertTable::throw_database_closed();
-	}
-	return true;
+	if ( !file_handle.is_opened() ) {
+		if ( database_shutdown ) {
+			ChertTable::throw_database_closed();
+		}
+		return true;
     }
     ChertCursor cur(const_cast<ChertTable*>(this));
     cur.find_entry(string());
@@ -1708,8 +1656,8 @@ void
 ChertTable::create_and_open(unsigned int block_size_)
 {
     LOGCALL_VOID(DB, "ChertTable::create_and_open", block_size_);
-    if (handle == -2) {
-	ChertTable::throw_database_closed();
+	if ( database_shutdown ) {
+		ChertTable::throw_database_closed();
     }
     Assert(writable);
     close();
@@ -1729,7 +1677,8 @@ ChertTable::create_and_open(unsigned int block_size_)
     base_.set_block_size(block_size_);
     base_.set_have_fakeroot(true);
     base_.set_sequential(true);
-    base_.write_to_file(name + "baseA", 'A', string(), -1, NULL);
+	Xapian::File	dummy;
+    base_.write_to_file(name + "baseA", 'A', string(), dummy, file_system, NULL);
 
     /* remove the alternative base file, if any */
     (void)io_unlink(name + "baseB");
@@ -1760,18 +1709,17 @@ ChertTable::~ChertTable() {
 void ChertTable::close(bool permanent) {
     LOGCALL_VOID(DB, "ChertTable::close", NO_ARGS);
 
-    if (handle >= 0) {
-	// If an error occurs here, we just ignore it, since we're just
-	// trying to free everything.
-	(void)::close(handle);
-	handle = -1;
+	if ( file_handle.is_opened() ) {
+		// If an error occurs here, we just ignore it, since we're just
+		// trying to free everything.
+		file_handle.close();
     }
 
     if (permanent) {
-	handle = -2;
-	// Don't delete the resources in the table, since they may
-	// still be used to look up cached content.
-	return;
+		database_shutdown = true;
+		// Don't delete the resources in the table, since they may
+		// still be used to look up cached content.
+		return;
     }
     for (int j = level; j >= 0; j--) {
 	delete [] C[j].p;
@@ -1791,11 +1739,11 @@ ChertTable::flush_db()
 {
     LOGCALL_VOID(DB, "ChertTable::flush_db", NO_ARGS);
     Assert(writable);
-    if (handle < 0) {
-	if (handle == -2) {
-	    ChertTable::throw_database_closed();
-	}
-	return;
+	if ( !file_handle.is_opened() ) {
+    	if (database_shutdown) {
+		    ChertTable::throw_database_closed();
+		}
+		return;
     }
 
     for (int j = level; j >= 0; j--) {
@@ -1809,146 +1757,138 @@ ChertTable::flush_db()
     }
 }
 
-void
-ChertTable::commit(chert_revision_number_t revision, int changes_fd,
-		   const string * changes_tail)
+void ChertTable::commit(chert_revision_number_t revision, Xapian::File & changes_file, const std::string * changes_tail)
 {
-    LOGCALL_VOID(DB, "ChertTable::commit", revision | changes_fd | changes_tail);
-    Assert(writable);
+	LOGCALL_VOID(DB, "ChertTable::commit", revision | changes_file.debug() | changes_tail);
+	Assert(writable);
 
-    if (revision <= revision_number) {
-	throw Xapian::DatabaseError("New revision too low");
-    }
-
-    if (handle < 0) {
-	if (handle == -2) {
-	    ChertTable::throw_database_closed();
-	}
-	latest_revision_number = revision_number = revision;
-	return;
-    }
-
-    try {
-	if (faked_root_block) {
-	    /* We will use a dummy bitmap. */
-	    base.clear_bit_map();
+	if (revision <= revision_number) {
+		throw Xapian::DatabaseError("New revision too low");
 	}
 
-	base.set_revision(revision);
-	base.set_root(C[level].n);
-	base.set_level(level);
-	base.set_item_count(item_count);
-	base.set_have_fakeroot(faked_root_block);
-	base.set_sequential(sequential);
-
-	base_letter = other_base_letter();
-
-	both_bases = true;
-	latest_revision_number = revision_number = revision;
-	root = C[level].n;
-
-	Btree_modified = false;
-
-	for (int i = 0; i < BTREE_CURSOR_LEVELS; ++i) {
-	    C[i].n = BLK_UNUSED;
-	    C[i].c = -1;
-	    C[i].rewrite = false;
+	if ( !file_handle.is_opened() ) {
+		if ( database_shutdown ) {
+			ChertTable::throw_database_closed();
+		}
+		latest_revision_number = revision_number = revision;
+		return;
 	}
 
-	// Save to "<table>.tmp" and then rename to "<table>.base<letter>" so
-	// that a reader can't try to read a partially written base file.
-	string tmp = name;
-	tmp += "tmp";
-	string basefile = name;
-	basefile += "base";
-	basefile += char(base_letter);
-	base.write_to_file(tmp, base_letter, tablename, changes_fd, changes_tail);
+	try {
+		if (faked_root_block) {
+			/* We will use a dummy bitmap. */
+			base.clear_bit_map();
+		}
 
-	// Do this as late as possible to allow maximum time for writes to
-	// happen, and so the calls to io_sync() are adjacent which may be
-	// more efficient, at least with some Linux kernel versions.
-	if (!io_sync(handle)) {
-	    (void)::close(handle);
-	    handle = -1;
-	    (void)unlink(tmp);
-	    throw Xapian::DatabaseError("Can't commit new revision - failed to flush DB to disk");
+		base.set_revision(revision);
+		base.set_root(C[level].n);
+		base.set_level(level);
+		base.set_item_count(item_count);
+		base.set_have_fakeroot(faked_root_block);
+		base.set_sequential(sequential);
+
+		base_letter = other_base_letter();
+
+		both_bases = true;
+		latest_revision_number = revision_number = revision;
+		root = C[level].n;
+
+		Btree_modified = false;
+
+		for (int i = 0; i < BTREE_CURSOR_LEVELS; ++i) {
+			C[i].n = BLK_UNUSED;
+			C[i].c = -1;
+			C[i].rewrite = false;
+		}
+
+		// Save to "<table>.tmp" and then rename to "<table>.base<letter>" so
+		// that a reader can't try to read a partially written base file.
+		string tmp = name;
+		tmp += "tmp";
+		string basefile = name;
+		basefile += "base";
+		basefile += char(base_letter);
+		base.write_to_file(tmp, base_letter, tablename, changes_file, file_system, changes_tail);
+
+		// Do this as late as possible to allow maximum time for writes to
+		// happen, and so the calls to io_sync() are adjacent which may be
+		// more efficient, at least with some Linux kernel versions.
+		if ( !file_handle.io_sync() ) {
+			file_handle.close();
+			file_system.unlink( tmp );
+			throw Xapian::DatabaseError("Can't commit new revision - failed to flush DB to disk");
+		}
+
+		if ( !file_system.rename( tmp, basefile ) ) 
+		{
+			// With NFS, rename() failing may just mean that the server crashed
+			// after successfully renaming, but before reporting this, and then
+			// the retried operation fails.  So we need to check if the source
+			// file still exists, which we do by calling unlink(), since we want
+			// to remove the temporary file anyway.
+			int saved_errno = errno;
+			if ( file_system.unlink( tmp ) ) {
+				string msg("Couldn't update base file ");
+				msg += basefile;
+				msg += ": ";
+				msg += strerror(saved_errno);
+				throw Xapian::DatabaseError(msg);
+			}
+		}
+		base.commit();
+
+		read_root();
+
+		changed_n = 0;
+		changed_c = DIR_START;
+		seq_count = SEQ_START_POINT;
+	} catch (...) {
+		ChertTable::close();
+		throw;
 	}
-
-#if defined __WIN32__
-	if (msvc_posix_rename(tmp.c_str(), basefile.c_str()) < 0)
-#else
-	if (rename(tmp.c_str(), basefile.c_str()) < 0)
-#endif
-	{
-	    // With NFS, rename() failing may just mean that the server crashed
-	    // after successfully renaming, but before reporting this, and then
-	    // the retried operation fails.  So we need to check if the source
-	    // file still exists, which we do by calling unlink(), since we want
-	    // to remove the temporary file anyway.
-	    int saved_errno = errno;
-	    if (unlink(tmp) == 0 || errno != ENOENT) {
-		string msg("Couldn't update base file ");
-		msg += basefile;
-		msg += ": ";
-		msg += strerror(saved_errno);
-		throw Xapian::DatabaseError(msg);
-	    }
-	}
-	base.commit();
-
-	read_root();
-
-	changed_n = 0;
-	changed_c = DIR_START;
-	seq_count = SEQ_START_POINT;
-    } catch (...) {
-	ChertTable::close();
-	throw;
-    }
 }
 
-void
-ChertTable::write_changed_blocks(int changes_fd)
+void ChertTable::write_changed_blocks(Xapian::File & changes_file)
 {
-    LOGCALL_VOID(DB, "ChertTable::write_changed_blocks", changes_fd);
-    Assert(changes_fd >= 0);
-    if (handle < 0) return;
-    if (faked_root_block) return;
+	LOGCALL_VOID(DB, "ChertTable::write_changed_blocks", changes_file.debug() );
+	
+	if ( !file_handle.is_opened() ) return;
+	if (faked_root_block) return;
 
-    string buf;
-    pack_uint(buf, 2u); // Indicate the item is a list of blocks
-    pack_string(buf, tablename);
-    pack_uint(buf, block_size);
-    io_write(changes_fd, buf.data(), buf.size());
+	string buf;
+	pack_uint(buf, 2u); // Indicate the item is a list of blocks
+	pack_string(buf, tablename);
+	pack_uint(buf, block_size);
+	changes_file.io_write( buf.data(), buf.size());
 
-    // Compare the old and new bitmaps to find blocks which have changed, and
-    // write them to the file descriptor.
-    uint4 n = 0;
-    byte * p = new byte[block_size];
-    try {
-	base.calculate_last_block();
-	while (base.find_changed_block(&n)) {
-	    buf.resize(0);
-	    pack_uint(buf, n + 1);
-	    io_write(changes_fd, buf.data(), buf.size());
+	// Compare the old and new bitmaps to find blocks which have changed, and
+	// write them to the file descriptor.
+	uint4 n = 0;
+	byte * p = new byte[block_size];
+	try {
+		base.calculate_last_block();
+		while (base.find_changed_block(&n)) {
+			buf.resize(0);
+			pack_uint(buf, n + 1);
+			changes_file.io_write( buf.data(), buf.size());
 
-	    // Read block n.
-	    read_block(n, p);
+			// Read block n.
+			read_block(n, p);
 
-	    // Write block n to the file.
-	    io_write(changes_fd, reinterpret_cast<const char *>(p),
-		     block_size);
-	    ++n;
+			// Write block n to the file.
+			changes_file.io_write( reinterpret_cast<const char *>(p),
+				block_size);
+			++n;
+		}
+		delete[] p;
+		p = 0;
+	} catch (...) {
+		delete[] p;
+		throw;
 	}
-	delete[] p;
-	p = 0;
-    } catch (...) {
-	delete[] p;
-	throw;
-    }
-    buf.resize(0);
-    pack_uint(buf, 0u);
-    io_write(changes_fd, buf.data(), buf.size());
+	buf.resize(0);
+	pack_uint(buf, 0u);
+	changes_file.io_write( buf.data(), buf.size());
 }
 
 void
@@ -1957,18 +1897,18 @@ ChertTable::cancel()
     LOGCALL_VOID(DB, "ChertTable::cancel", NO_ARGS);
     Assert(writable);
 
-    if (handle < 0) {
-	if (handle == -2) {
-	    ChertTable::throw_database_closed();
-	}
-	latest_revision_number = revision_number; // FIXME: we can end up reusing a revision if we opened a btree at an older revision, start to modify it, then cancel...
-	return;
+	if ( !file_handle.is_opened() ) {
+		if ( database_shutdown ) {
+			ChertTable::throw_database_closed();
+		}
+		latest_revision_number = revision_number; // FIXME: we can end up reusing a revision if we opened a btree at an older revision, start to modify it, then cancel...
+		return;
     }
 
     // This causes problems: if (!Btree_modified) return;
 
     string err_msg;
-    if (!base.read(name, base_letter, writable, err_msg)) {
+    if (!base.read(name, file_system, base_letter, writable, err_msg)) {
 	throw Xapian::DatabaseCorruptError(string("Couldn't reread base ") + base_letter);
     }
 
@@ -2002,34 +1942,33 @@ bool
 ChertTable::do_open_to_read(bool revision_supplied, chert_revision_number_t revision_)
 {
     LOGCALL(DB, bool, "ChertTable::do_open_to_read", revision_supplied | revision_);
-    if (handle == -2) {
-	ChertTable::throw_database_closed();
+	if ( database_shutdown ) {
+		ChertTable::throw_database_closed();
     }
-    handle = ::open((name + "DB").c_str(), O_RDONLY | O_BINARY);
-    if (handle < 0) {
-	if (lazy) {
-	    // This table is optional when reading!
-	    revision_number = revision_;
-	    RETURN(true);
-	}
-	string message("Couldn't open ");
-	message += name;
-	message += "DB to read: ";
-	message += strerror(errno);
-	throw Xapian::DatabaseOpeningError(message);
+	file_handle = file_system.open( name + "DB", O_RDONLY | O_BINARY, 0666 );
+	if ( !file_handle.is_opened() ) {
+    	if (lazy) {
+		    // This table is optional when reading!
+			revision_number = revision_;
+			RETURN(true);
+		}
+		string message("Couldn't open ");
+		message += name;
+		message += "DB to read: ";
+		message += strerror(errno);
+		throw Xapian::DatabaseOpeningError(message);
     }
 
     if (!basic_open(revision_supplied, revision_)) {
-	::close(handle);
-	handle = -1;
-	if (revision_supplied) {
-	    // The requested revision was not available.
-	    // This could be because the database was modified underneath us, or
-	    // because a base file is missing.  Return false, and work out what
-	    // the problem was at a higher level.
-	    RETURN(false);
-	}
-	throw Xapian::DatabaseOpeningError("Failed to open table for reading");
+		file_handle.close();
+		if (revision_supplied) {
+			// The requested revision was not available.
+			// This could be because the database was modified underneath us, or
+			// because a base file is missing.  Return false, and work out what
+			// the problem was at a higher level.
+			RETURN(false);
+		}
+		throw Xapian::DatabaseOpeningError("Failed to open table for reading");
     }
 
     for (int j = 0; j <= level; j++) {

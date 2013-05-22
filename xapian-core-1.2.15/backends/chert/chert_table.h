@@ -25,6 +25,7 @@
 
 #include <xapian/error.h>
 #include <xapian/visibility.h>
+#include <xapian/filesystem.h>
 
 #include "chert_types.h"
 #include "chert_btreebase.h"
@@ -237,13 +238,13 @@ public:
 	    // chert doubles zero bytes, so this can still happen for terms
 	    // which contain one or more zero bytes.
 	    std::string msg("Key too long: length was ");
-	    msg += str(key_len);
+	    msg += str( static_cast<unsigned int>(key_len) );
 	    msg += " bytes, maximum length of a key is "
 		   STRINGIZE(CHERT_BTREE_MAX_KEY_LEN) " bytes";
 	    throw Xapian::InvalidArgumentError(msg);
 	}
 
-	set_key_len(key_len + K1 + C2);
+	set_key_len( static_cast<unsigned int>( key_len + K1 + C2) );
 	std::memmove(p + I2 + K1, key_.data(), key_len);
 	set_component_of(1);
     }
@@ -317,7 +318,7 @@ class XAPIAN_VISIBILITY_DEFAULT ChertTable {
 	 */
 	ChertTable(const char * tablename_, const std::string & path_,
 		   bool readonly_, int compress_strategy_ = DONT_COMPRESS,
-		   bool lazy = false);
+		   bool lazy = false, Xapian::FileSystem file_system_ = Xapian::FileSystem());
 
 	/** Close the Btree.
 	 *
@@ -370,7 +371,7 @@ class XAPIAN_VISIBILITY_DEFAULT ChertTable {
 	 *
 	 *  NB If the table is lazy and doesn't yet exist, returns false.
 	 */
-	bool is_open() const { return handle >= 0; }
+	bool is_open() const { return file_handle.is_opened(); }
 
 	/** Flush any outstanding changes to the DB file of the table.
 	 *
@@ -395,14 +396,20 @@ class XAPIAN_VISIBILITY_DEFAULT ChertTable {
 	 *  @param changes_fd  The file descriptor to write changes to.
 	 *	    Defaults to -1, meaning no changes will be written.
 	 */
-	void commit(chert_revision_number_t revision, int changes_fd = -1,
-		    const std::string * changes_tail = NULL);
+	void commit(chert_revision_number_t revision, Xapian::File & changes_file,
+			const std::string * changes_tail = NULL);
+
+	void commit(chert_revision_number_t revision, const std::string * changes_tail = NULL) {
+			Xapian::File dummy;
+			commit( revision, dummy, changes_tail );
+	}
 
 	/** Append the list of blocks changed to a changeset file.
 	 *
 	 *  @param changes_fd  The file descriptor to write changes to.
 	 */
 	void write_changed_blocks(int changes_fd);
+	void write_changed_blocks(Xapian::File & changes_file);
 
 	/** Cancel any outstanding changes.
 	 *
@@ -695,8 +702,11 @@ class XAPIAN_VISIBILITY_DEFAULT ChertTable {
 	 *
 	 *  If close() has been called, this will be -2.
 	 */
-	int handle;
-
+	//int handle;
+	mutable Xapian::File		file_handle;
+	mutable Xapian::FileSystem	file_system;
+	bool						database_shutdown;
+	
 	/// number of levels, counting from 0
 	int level;
 
