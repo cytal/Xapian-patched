@@ -1635,9 +1635,9 @@ ChertTable::erase()
     LOGCALL_VOID(DB, "ChertTable::erase", NO_ARGS);
     close();
 
-	file_system.unlink_strict( name + "baseA");
-    file_system.unlink_strict( name + "baseB");
-    file_system.unlink_strict( name + "DB" );
+	file_system.io_unlink( name + "baseA");
+    file_system.io_unlink( name + "baseB");
+    file_system.io_unlink( name + "DB" );
 }
 
 void
