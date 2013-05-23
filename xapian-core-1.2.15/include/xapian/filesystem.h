@@ -163,6 +163,7 @@ public:
 	bool	unlink( const std::string & file ) {
 		return get_internal().unlink( file );
 	}
+	bool	io_unlink( const std::string & file  );
 	
 	bool	path_exist(const std::string & file, FileState * pState = NULL ) {
 		return get_internal().path_exist( file, pState );

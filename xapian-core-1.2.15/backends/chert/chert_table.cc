@@ -1635,9 +1635,9 @@ ChertTable::erase()
     LOGCALL_VOID(DB, "ChertTable::erase", NO_ARGS);
     close();
 
-    (void)io_unlink(name + "baseA");
-    (void)io_unlink(name + "baseB");
-    (void)io_unlink(name + "DB");
+	file_system.unlink_strict( name + "baseA");
+    file_system.unlink_strict( name + "baseB");
+    file_system.unlink_strict( name + "DB" );
 }
 
 void
@@ -1681,7 +1681,7 @@ ChertTable::create_and_open(unsigned int block_size_)
     base_.write_to_file(name + "baseA", 'A', string(), dummy, file_system, NULL);
 
     /* remove the alternative base file, if any */
-    (void)io_unlink(name + "baseB");
+    (void)file_system.io_unlink(name + "baseB");
 
     // Any errors are thrown if revision_supplied is false.
     (void)do_open_to_write(false, 0, true);

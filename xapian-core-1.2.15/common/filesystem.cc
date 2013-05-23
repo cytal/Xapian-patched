@@ -81,6 +81,15 @@ bool FileSystem::load_file_to_string( const std::string & file, std::string & co
 	return true;
 }
 
+bool FileSystem::io_unlink( const std::string & file ) 
+{
+	if ( get_internal().unlink( file ) )
+		return true;
+	else if ( errno != ENOENT)
+		throw Xapian::DatabaseError(file + ": delete failed", errno);
+	return false;
+}
+
 //////////////////////////////////////////////////////////////////////////
 
 void File::load_to_string( std::string & s )
