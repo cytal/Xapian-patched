@@ -311,7 +311,7 @@ bool StandardFileSystemInternal::rename(const std::string & oldname, const std::
 
 bool StandardFileSystemInternal::unlink( const std::string & file )
 {
-	return unlink(file.c_str()) == 0 || errno == ENOENT;
+	return ::unlink(file.c_str()) == 0 || errno == ENOENT;
 }
 
 bool StandardFileSystemInternal::path_exist(const std::string & file, FileState * pState )
