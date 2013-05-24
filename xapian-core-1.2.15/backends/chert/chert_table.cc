@@ -1625,8 +1625,8 @@ ChertTable::lazy_alloc_inflate_zstream() const {
 bool
 ChertTable::exists() const {
     LOGCALL(DB, bool, "ChertTable::exists", NO_ARGS);
-    return (file_exists(name + "DB") &&
-	    (file_exists(name + "baseA") || file_exists(name + "baseB")));
+    return ( file_system.file_exist(name + "DB") &&
+	    (file_system.file_exist(name + "baseA") || file_system.file_exist(name + "baseB")));
 }
 
 void
