@@ -199,7 +199,7 @@ merge_postlists(Xapian::Compactor & compactor,
 		ChertTable * out, vector<Xapian::docid>::const_iterator offset,
 		vector<string>::const_iterator b,
 		vector<string>::const_iterator e,
-		Xapian::docid last_docid)
+		Xapian::docid last_docid, Xapian::FileSystem & file_system)
 {
     totlen_t tot_totlen = 0;
     Xapian::termcount doclen_lbound = static_cast<Xapian::termcount>(-1);
@@ -207,7 +207,7 @@ merge_postlists(Xapian::Compactor & compactor,
     Xapian::termcount doclen_ubound = 0;
     priority_queue<PostlistCursor *, vector<PostlistCursor *>, PostlistCursorGt> pq;
     for ( ; b != e; ++b, ++offset) {
-	ChertTable *in = new ChertTable("postlist", *b, true);
+	ChertTable *in = new ChertTable("postlist", *b, true, DONT_COMPRESS, false, file_system);
 	in->open();
 	if (in->empty()) {
 	    // Skip empty tables.
@@ -481,11 +481,11 @@ struct CursorGt {
 static void
 merge_spellings(ChertTable * out,
 		vector<string>::const_iterator b,
-		vector<string>::const_iterator e)
+		vector<string>::const_iterator e, Xapian::FileSystem & file_system)
 {
     priority_queue<MergeCursor *, vector<MergeCursor *>, CursorGt> pq;
     for ( ; b != e; ++b) {
-	ChertTable *in = new ChertTable("spelling", *b, true, DONT_COMPRESS, true);
+	ChertTable *in = new ChertTable("spelling", *b, true, DONT_COMPRESS, true, file_system);
 	in->open();
 	if (!in->empty()) {
 	    // The MergeCursor takes ownership of ChertTable in and is
@@ -595,11 +595,11 @@ merge_spellings(ChertTable * out,
 static void
 merge_synonyms(ChertTable * out,
 	       vector<string>::const_iterator b,
-	       vector<string>::const_iterator e)
+		   vector<string>::const_iterator e, Xapian::FileSystem & file_system)
 {
     priority_queue<MergeCursor *, vector<MergeCursor *>, CursorGt> pq;
     for ( ; b != e; ++b) {
-	ChertTable *in = new ChertTable("synonym", *b, true, DONT_COMPRESS, true);
+	ChertTable *in = new ChertTable("synonym", *b, true, DONT_COMPRESS, true, file_system);
 	in->open();
 	if (!in->empty()) {
 	    // The MergeCursor takes ownership of ChertTable in and is
@@ -682,7 +682,7 @@ static void
 multimerge_postlists(Xapian::Compactor & compactor,
 		     ChertTable * out, const char * tmpdir,
 		     Xapian::docid last_docid,
-		     vector<string> tmp, vector<Xapian::docid> off)
+		     vector<string> tmp, vector<Xapian::docid> off, Xapian::FileSystem & file_system)
 {
     unsigned int c = 0;
     while (tmp.size() > 3) {
@@ -702,12 +702,12 @@ multimerge_postlists(Xapian::Compactor & compactor,
 
 	    // Don't compress temporary tables, even if the final table would
 	    // be.
-	    ChertTable tmptab("postlist", dest, false);
+	    ChertTable tmptab("postlist", dest, false, DONT_COMPRESS, false, file_system);
 	    // Use maximum blocksize for temporary tables.
 	    tmptab.create_and_open(65536);
 
 	    merge_postlists(compactor, &tmptab, off.begin() + i,
-			    tmp.begin() + i, tmp.begin() + j, last_docid);
+			    tmp.begin() + i, tmp.begin() + j, last_docid, file_system);
 	    if (c > 0) {
 		for (unsigned int k = i; k < j; ++k) {
 		    unlink((tmp[k] + "DB").c_str());
@@ -724,7 +724,7 @@ multimerge_postlists(Xapian::Compactor & compactor,
 	++c;
     }
     merge_postlists(compactor,
-		    out, off.begin(), tmp.begin(), tmp.end(), last_docid);
+		    out, off.begin(), tmp.begin(), tmp.end(), last_docid, file_system);
     if (c > 0) {
 	for (size_t k = 0; k < tmp.size(); ++k) {
 	    unlink((tmp[k] + "DB").c_str());
@@ -737,12 +737,12 @@ multimerge_postlists(Xapian::Compactor & compactor,
 static void
 merge_docid_keyed(const char * tablename,
 		  ChertTable *out, const vector<string> & inputs,
-		  const vector<Xapian::docid> & offset, bool lazy)
+		  const vector<Xapian::docid> & offset, bool lazy, Xapian::FileSystem & file_system)
 {
     for (size_t i = 0; i < inputs.size(); ++i) {
 	Xapian::docid off = offset[i];
 
-	ChertTable in(tablename, inputs[i], true, DONT_COMPRESS, lazy);
+	ChertTable in(tablename, inputs[i], true, DONT_COMPRESS, lazy, file_system);
 	in.open();
 	if (in.empty()) continue;
 
@@ -890,22 +890,22 @@ compact_chert(Xapian::Compactor & compactor,
 	    case POSTLIST:
 		if (multipass && inputs.size() > 3) {
 		    multimerge_postlists(compactor, &out, destdir, last_docid,
-					 inputs, offset);
+					 inputs, offset, file_system);
 		} else {
 		    merge_postlists(compactor, &out, offset.begin(),
 				    inputs.begin(), inputs.end(),
-				    last_docid);
+				    last_docid, file_system);
 		}
 		break;
 	    case SPELLING:
-		merge_spellings(&out, inputs.begin(), inputs.end());
+		merge_spellings(&out, inputs.begin(), inputs.end(), file_system);
 		break;
 	    case SYNONYM:
-		merge_synonyms(&out, inputs.begin(), inputs.end());
+		merge_synonyms(&out, inputs.begin(), inputs.end(), file_system);
 		break;
 	    default:
 		// Position, Record, Termlist
-		merge_docid_keyed(t->name, &out, inputs, offset, t->lazy);
+		merge_docid_keyed(t->name, &out, inputs, offset, t->lazy, file_system);
 		break;
 	}
 
