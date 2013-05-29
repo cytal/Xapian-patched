@@ -33,11 +33,11 @@
 class BrassTableCheck : public BrassTable {
     public:
 	static void check(const char * tablename, const std::string & path,
-			  int opts, std::ostream &out = std::cout);
+			int opts, std::ostream &out = std::cout, Xapian::FileSystem file_system = Xapian::FileSystem() );
     private:
 	BrassTableCheck(const char * tablename_, const std::string &path_,
-		        bool readonly, std::ostream &out_)
-	    : BrassTable(tablename_, path_, readonly), out(out_) { }
+			bool readonly, std::ostream &out_, Xapian::FileSystem file_system_)
+			: BrassTable(tablename_, path_, readonly, DONT_COMPRESS, false, file_system_), out(out_) { }
 
 	void block_check(Brass::Cursor * C_, int j, int opts);
 	int block_usage(const byte * p) const;

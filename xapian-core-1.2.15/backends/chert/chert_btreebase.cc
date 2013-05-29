@@ -23,14 +23,10 @@
 #include <config.h>
 
 #include "safeerrno.h"
-#ifdef __WIN32__
-# include "msvc_posix_wrapper.h"
-#endif
-
 #include <xapian/error.h>
 
 #include "chert_btreebase.h"
-#include "io_utils.h"
+//#include "io_utils.h"
 #include "omassert.h"
 #include "pack.h"
 #include "str.h"

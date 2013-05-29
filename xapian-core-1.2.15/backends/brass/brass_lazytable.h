@@ -33,8 +33,8 @@ class BrassLazyTable : public BrassTable {
      *  @param z_strategy	zlib strategy.
      */
     BrassLazyTable(const char * name_, const std::string & path, bool readonly,
-		   int z_strategy)
-	: BrassTable(name_, path, readonly, z_strategy, true) { }
+		int z_strategy, Xapian::FileSystem file_system_)
+	: BrassTable(name_, path, readonly, z_strategy, true, file_system_) { }
 
     /** Lazy version of BrassTable::create_and_open().
      *

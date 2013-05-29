@@ -25,6 +25,7 @@
 #include <string>
 
 #include <xapian/visibility.h>
+#include <xapian/filesystem.h>
 
 #include "brass_types.h"
 
@@ -47,8 +48,8 @@ class XAPIAN_VISIBILITY_DEFAULT BrassTable_base {
 	 *
 	 *  @return	true if the read succeeded, or false otherwise.
 	 */
-	bool read(const std::string &name, char ch, bool read_bitmap,
-		  std::string &err_msg);
+	bool read(const std::string &name, Xapian::FileSystem file_system, char ch, bool read_bitmap,
+			std::string &err_msg);
 
 	uint4 get_revision() const { return revision; }
 	uint4 get_block_size() const { return block_size; }
@@ -83,10 +84,10 @@ class XAPIAN_VISIBILITY_DEFAULT BrassTable_base {
 	}
 
 	/** Write the btree base file to disk. */
-	void write_to_file(const std::string &filename,
+	void write_to_file(const std::string &filename, Xapian::FileSystem file_system,
 			   char base_letter,
 			   const std::string &tablename,
-			   int changes_fd,
+			   Xapian::File & changes_file,
 			   const std::string * changes_tail);
 
 	/* Methods dealing with the bitmap */

@@ -28,9 +28,6 @@
 #include <xapian/error.h>
 
 #include "safeerrno.h"
-#ifdef __WIN32__
-# include "msvc_posix_wrapper.h"
-#endif
 
 #include "omassert.h"
 #include "str.h"
@@ -71,7 +68,6 @@ PWRITE_PROTOTYPE
 #include "brass_cursor.h"
 
 #include "debuglog.h"
-#include "io_utils.h"
 #include "omassert.h"
 #include "pack.h"
 #include "unaligned.h"
@@ -194,40 +190,13 @@ BrassTable::read_block(uint4 n, byte * p) const
      */
     Assert(n / CHAR_BIT < base.get_bit_map_size());
 
-#ifdef HAVE_PREAD
-    off_t offset = off_t(block_size) * n;
-    int m = block_size;
-    while (true) {
-	ssize_t bytes_read = pread(handle, reinterpret_cast<char *>(p), m,
-				   offset);
-	// normal case - read succeeded, so return.
-	if (bytes_read == m) return;
-	if (bytes_read == -1) {
-	    if (errno == EINTR) continue;
-	    string message = "Error reading block " + str(n) + ": ";
-	    message += strerror(errno);
-	    throw Xapian::DatabaseError(message);
-	} else if (bytes_read == 0) {
-	    string message = "Error reading block " + str(n) + ": got end of file";
-	    throw Xapian::DatabaseError(message);
-	} else if (bytes_read < m) {
-	    /* Read part of the block, which is not an error.  We should
-	     * continue reading the rest of the block.
-	     */
-	    m -= int(bytes_read);
-	    p += bytes_read;
-	    offset += bytes_read;
+	off_t offset = off_t(block_size) * n;
+	if ( file_handle.seek( offset ,SEEK_SET ) == -1 ){
+		string message = "Error seeking to block: ";
+		message += strerror(errno);
+		throw Xapian::DatabaseError(message);
 	}
-    }
-#else
-    if (lseek(handle, off_t(block_size) * n, SEEK_SET) == -1) {
-	string message = "Error seeking to block: ";
-	message += strerror(errno);
-	throw Xapian::DatabaseError(message);
-    }
-
-    io_read(handle, reinterpret_cast<char *>(p), block_size, block_size);
-#endif
+	file_handle.io_read( reinterpret_cast<char *>(p), block_size, block_size);
 }
 
 /** write_block(n, p) writes block n in the DB file from address p.
@@ -258,47 +227,19 @@ BrassTable::write_block(uint4 n, const byte * p) const
 	// case is unhelpful, since we wanted the file gone anyway!  The
 	// likely explanation is that somebody moved, deleted, or changed a
 	// symlink to the database directory.
-	(void)io_unlink(name + "base" + other_base_letter());
+	file_system.unlink(name + "base" + other_base_letter());
 	both_bases = false;
 	latest_revision_number = revision_number;
     }
 
-#ifdef HAVE_PWRITE
-    off_t offset = off_t(block_size) * n;
-    int m = block_size;
-    while (true) {
-	ssize_t bytes_written = pwrite(handle, p, m, offset);
-	if (bytes_written == m) {
-	    // normal case - write succeeded, so return.
-	    return;
-	} else if (bytes_written == -1) {
-	    if (errno == EINTR) continue;
-	    string message = "Error writing block: ";
-	    message += strerror(errno);
-	    throw Xapian::DatabaseError(message);
-	} else if (bytes_written == 0) {
-	    string message = "Error writing block: wrote no data";
-	    throw Xapian::DatabaseError(message);
-	} else if (bytes_written < m) {
-	    /* Wrote part of the block, which is not an error.  We should
-	     * continue writing the rest of the block.
-	     */
-	    m -= bytes_written;
-	    p += bytes_written;
-	    offset += bytes_written;
+	off_t offset = off_t(block_size) * n;
+	if ( file_handle.seek( offset, SEEK_SET) == -1) {
+		string message = "Error seeking to block: ";
+		message += strerror(errno);
+		throw Xapian::DatabaseError(message);
 	}
-    }
-#else
-    if (lseek(handle, (off_t)block_size * n, SEEK_SET) == -1) {
-	string message = "Error seeking to block: ";
-	message += strerror(errno);
-	throw Xapian::DatabaseError(message);
-    }
-
-    io_write(handle, reinterpret_cast<const char *>(p), block_size);
-#endif
+	file_handle.io_write( reinterpret_cast<const char *>(p), block_size);
 }
-
 
 /* A note on cursors:
 
@@ -1018,7 +959,7 @@ BrassTable::add(const string &key, string tag, bool already_compressed)
     LOGCALL_VOID(DB, "BrassTable::add", key | tag | already_compressed);
     Assert(writable);
 
-    if (handle < 0) create_and_open(block_size);
+    if ( !file_handle.is_opened() ) create_and_open(block_size);
 
     form_key(key);
 
@@ -1140,11 +1081,11 @@ BrassTable::del(const string &key)
     LOGCALL(DB, bool, "BrassTable::del", key);
     Assert(writable);
 
-    if (handle < 0) {
-	if (handle == -2) {
-	    BrassTable::throw_database_closed();
-	}
-	RETURN(false);
+	if ( !file_handle.is_opened() ) {
+		if (database_shutdown) {
+		    BrassTable::throw_database_closed();
+		}
+		RETURN(false);
     }
 
     // We can't delete a key which we is too long for us to store.
@@ -1176,8 +1117,8 @@ BrassTable::get_exact_entry(const string &key, string & tag) const
     LOGCALL(DB, bool, "BrassTable::get_exact_entry", key | tag);
     Assert(!key.empty());
 
-    if (handle < 0) {
-	if (handle == -2) {
+	if ( !file_handle.is_opened() ) {
+		if (database_shutdown) {
 	    BrassTable::throw_database_closed();
 	}
 	RETURN(false);
@@ -1303,8 +1244,8 @@ BrassTable::set_full_compaction(bool parity)
 
 BrassCursor * BrassTable::cursor_get() const {
     LOGCALL(DB, BrassCursor *, "BrassTable::cursor_get", NO_ARGS);
-    if (handle < 0) {
-	if (handle == -2) {
+	if ( !file_handle.is_opened() ) {
+		if (database_shutdown) {
 	    BrassTable::throw_database_closed();
 	}
 	RETURN(NULL);
@@ -1333,7 +1274,7 @@ BrassTable::basic_open(bool revision_supplied, brass_revision_number_t revision_
 	bool valid_base = false;
 	{
 	    for (size_t i = 0; i < BTREE_BASES; ++i) {
-		bool ok = bases[i].read(name, basenames[i], writable, err_msg);
+		bool ok = bases[i].read(name, file_system, basenames[i], writable, err_msg);
 		base_ok[i] = ok;
 		if (ok) {
 		    valid_base = true;
@@ -1344,9 +1285,8 @@ BrassTable::basic_open(bool revision_supplied, brass_revision_number_t revision_
 	}
 
 	if (!valid_base) {
-	    if (handle >= 0) {
-		::close(handle);
-		handle = -1;
+	    if ( file_handle.is_opened() ) {
+			file_handle.close();
 	    }
 	    string message = "Error opening table `";
 	    message += name;
@@ -1490,13 +1430,13 @@ BrassTable::do_open_to_write(bool revision_supplied,
 			     bool create_db)
 {
     LOGCALL(DB, bool, "BrassTable::do_open_to_write", revision_supplied | revision_ | create_db);
-    if (handle == -2) {
+	if (database_shutdown) {
 	BrassTable::throw_database_closed();
     }
     int flags = O_RDWR | O_BINARY;
     if (create_db) flags |= O_CREAT | O_TRUNC;
-    handle = ::open((name + "DB").c_str(), flags, 0666);
-    if (handle < 0) {
+    file_handle = file_system.open( name + "DB", flags, 0666);
+    if ( !file_handle.is_opened() ) {
 	// lazy doesn't make a lot of sense with create_db anyway, but ENOENT
 	// with O_CREAT means a parent directory doesn't exist.
 	if (lazy && !create_db && errno == ENOENT) {
@@ -1511,8 +1451,7 @@ BrassTable::do_open_to_write(bool revision_supplied,
     }
 
     if (!basic_open(revision_supplied, revision_)) {
-	::close(handle);
-	handle = -1;
+		file_handle.close();
 	if (!revision_supplied) {
 	    throw Xapian::DatabaseOpeningError("Failed to open for writing");
 	}
@@ -1547,7 +1486,7 @@ BrassTable::do_open_to_write(bool revision_supplied,
 }
 
 BrassTable::BrassTable(const char * tablename_, const string & path_,
-		       bool readonly_, int compress_strategy_, bool lazy_)
+					   bool readonly_, int compress_strategy_, bool lazy_,Xapian::FileSystem file_system_)
 	: tablename(tablename_),
 	  revision_number(0),
 	  item_count(0),
@@ -1557,7 +1496,8 @@ BrassTable::BrassTable(const char * tablename_, const string & path_,
 	  base_letter('A'),
 	  faked_root_block(true),
 	  sequential(true),
-	  handle(-1),
+	  file_system(file_system_),
+	  database_shutdown(false),
 	  level(0),
 	  root(0),
 	  kt(0),
@@ -1659,8 +1599,8 @@ BrassTable::lazy_alloc_inflate_zstream() const {
 bool
 BrassTable::exists() const {
     LOGCALL(DB, bool, "BrassTable::exists", NO_ARGS);
-    return (file_exists(name + "DB") &&
-	    (file_exists(name + "baseA") || file_exists(name + "baseB")));
+    return (file_system.file_exist(name + "DB") &&
+	    (file_system.file_exist(name + "baseA") || file_exists(name + "baseB")));
 }
 
 void
@@ -1669,9 +1609,9 @@ BrassTable::erase()
     LOGCALL_VOID(DB, "BrassTable::erase", NO_ARGS);
     close();
 
-    (void)io_unlink(name + "baseA");
-    (void)io_unlink(name + "baseB");
-    (void)io_unlink(name + "DB");
+	file_system.unlink(name + "baseA");
+    file_system.unlink(name + "baseB");
+    file_system.unlink(name + "DB");
 }
 
 void
@@ -1690,7 +1630,7 @@ void
 BrassTable::create_and_open(unsigned int block_size_)
 {
     LOGCALL_VOID(DB, "BrassTable::create_and_open", block_size_);
-    if (handle == -2) {
+	if ( database_shutdown ) {
 	BrassTable::throw_database_closed();
     }
     Assert(writable);
@@ -1711,10 +1651,10 @@ BrassTable::create_and_open(unsigned int block_size_)
     base_.set_block_size(block_size_);
     base_.set_have_fakeroot(true);
     base_.set_sequential(true);
-    base_.write_to_file(name + "baseA", 'A', string(), -1, NULL);
+	base_.write_to_file(name + "baseA", file_system, 'A', string(), Xapian::File(), NULL);
 
     /* remove the alternative base file, if any */
-    (void)io_unlink(name + "baseB");
+    file_system.unlink(name + "baseB");
 
     // Any errors are thrown if revision_supplied is false.
     (void)do_open_to_write(false, 0, true);
@@ -1742,15 +1682,14 @@ BrassTable::~BrassTable() {
 void BrassTable::close(bool permanent) {
     LOGCALL_VOID(DB, "BrassTable::close", NO_ARGS);
 
-    if (handle >= 0) {
+    if ( file_handle.is_opened() ) {
 	// If an error occurs here, we just ignore it, since we're just
 	// trying to free everything.
-	(void)::close(handle);
-	handle = -1;
+		file_handle.close();
     }
 
     if (permanent) {
-	handle = -2;
+		database_shutdown = true;
 	// Don't delete the resources in the table, since they may
 	// still be used to look up cached content.
 	return;
@@ -1773,11 +1712,11 @@ BrassTable::flush_db()
 {
     LOGCALL_VOID(DB, "BrassTable::flush_db", NO_ARGS);
     Assert(writable);
-    if (handle < 0) {
-	if (handle == -2) {
-	    BrassTable::throw_database_closed();
-	}
-	return;
+    if ( !file_handle.is_opened() ) {
+		if (database_shutdown) {
+			BrassTable::throw_database_closed();
+		}
+		return;
     }
 
     for (int j = level; j >= 0; j--) {
@@ -1792,7 +1731,7 @@ BrassTable::flush_db()
 }
 
 void
-BrassTable::commit(brass_revision_number_t revision, int changes_fd,
+BrassTable::commit(brass_revision_number_t revision, Xapian::File & changes_file,
 		   const string * changes_tail)
 {
     LOGCALL_VOID(DB, "BrassTable::commit", revision | changes_fd | changes_tail);
@@ -1802,12 +1741,12 @@ BrassTable::commit(brass_revision_number_t revision, int changes_fd,
 	throw Xapian::DatabaseError("New revision too low");
     }
 
-    if (handle < 0) {
-	if (handle == -2) {
-	    BrassTable::throw_database_closed();
-	}
-	latest_revision_number = revision_number = revision;
-	return;
+	if ( !file_handle.is_opened() ) {
+		if (database_shutdown) {
+		    BrassTable::throw_database_closed();
+		}
+		latest_revision_number = revision_number = revision;
+		return;
     }
 
     try {
@@ -1844,23 +1783,18 @@ BrassTable::commit(brass_revision_number_t revision, int changes_fd,
 	string basefile = name;
 	basefile += "base";
 	basefile += char(base_letter);
-	base.write_to_file(tmp, base_letter, tablename, changes_fd, changes_tail);
+	base.write_to_file(tmp, file_system, base_letter, tablename, changes_file, changes_tail);
 
 	// Do this as late as possible to allow maximum time for writes to
 	// happen, and so the calls to io_sync() are adjacent which may be
 	// more efficient, at least with some Linux kernel versions.
-	if (!io_sync(handle)) {
-	    (void)::close(handle);
-	    handle = -1;
-	    (void)unlink(tmp);
+	if (! file_handle.io_sync()) {
+		file_handle.close();
+		file_system.unlink(tmp);
 	    throw Xapian::DatabaseError("Can't commit new revision - failed to flush DB to disk");
 	}
 
-#if defined __WIN32__
-	if (msvc_posix_rename(tmp.c_str(), basefile.c_str()) < 0)
-#else
-	if (rename(tmp.c_str(), basefile.c_str()) < 0)
-#endif
+	if ( !file_system.rename( tmp, basefile ) )
 	{
 	    // With NFS, rename() failing may just mean that the server crashed
 	    // after successfully renaming, but before reporting this, and then
@@ -1868,7 +1802,7 @@ BrassTable::commit(brass_revision_number_t revision, int changes_fd,
 	    // file still exists, which we do by calling unlink(), since we want
 	    // to remove the temporary file anyway.
 	    int saved_errno = errno;
-	    if (unlink(tmp) == 0 || errno != ENOENT) {
+	    if ( file_system.unlink(tmp) ) {
 		string msg("Couldn't update base file ");
 		msg += basefile;
 		msg += ": ";
@@ -1890,18 +1824,18 @@ BrassTable::commit(brass_revision_number_t revision, int changes_fd,
 }
 
 void
-BrassTable::write_changed_blocks(int changes_fd)
+BrassTable::write_changed_blocks(Xapian::File & changes_file)
 {
     LOGCALL_VOID(DB, "BrassTable::write_changed_blocks", changes_fd);
-    Assert(changes_fd >= 0);
-    if (handle < 0) return;
+    Assert( changes_file.is_opened() );
+    if ( !file_handle.is_opened() ) return;
     if (faked_root_block) return;
 
     string buf;
     pack_uint(buf, 2u); // Indicate the item is a list of blocks
     pack_string(buf, tablename);
     pack_uint(buf, block_size);
-    io_write(changes_fd, buf.data(), buf.size());
+    changes_file.io_write( buf.data(), buf.size());
 
     // Compare the old and new bitmaps to find blocks which have changed, and
     // write them to the file descriptor.
@@ -1912,13 +1846,13 @@ BrassTable::write_changed_blocks(int changes_fd)
 	while (base.find_changed_block(&n)) {
 	    buf.resize(0);
 	    pack_uint(buf, n + 1);
-	    io_write(changes_fd, buf.data(), buf.size());
+	    changes_file.io_write( buf.data(), buf.size());
 
 	    // Read block n.
 	    read_block(n, p);
 
 	    // Write block n to the file.
-	    io_write(changes_fd, reinterpret_cast<const char *>(p), block_size);
+		changes_file.io_write( reinterpret_cast<const char *>(p), block_size);
 	    ++n;
 	}
 	delete[] p;
@@ -1929,7 +1863,7 @@ BrassTable::write_changed_blocks(int changes_fd)
     }
     buf.resize(0);
     pack_uint(buf, 0u);
-    io_write(changes_fd, buf.data(), buf.size());
+    changes_file.io_write( buf.data(), buf.size());
 }
 
 void
@@ -1938,18 +1872,18 @@ BrassTable::cancel()
     LOGCALL_VOID(DB, "BrassTable::cancel", NO_ARGS);
     Assert(writable);
 
-    if (handle < 0) {
-	if (handle == -2) {
-	    BrassTable::throw_database_closed();
-	}
-	latest_revision_number = revision_number; // FIXME: we can end up reusing a revision if we opened a btree at an older revision, start to modify it, then cancel...
-	return;
+	if ( !file_handle.is_opened() ) {
+		if (database_shutdown) {
+		    BrassTable::throw_database_closed();
+		}
+		latest_revision_number = revision_number; // FIXME: we can end up reusing a revision if we opened a btree at an older revision, start to modify it, then cancel...
+		return;
     }
 
     // This causes problems: if (!Btree_modified) return;
 
     string err_msg;
-    if (!base.read(name, base_letter, writable, err_msg)) {
+    if (!base.read(name, file_system, base_letter, writable, err_msg)) {
 	throw Xapian::DatabaseCorruptError(string("Couldn't reread base ") + base_letter);
     }
 
@@ -1983,11 +1917,11 @@ bool
 BrassTable::do_open_to_read(bool revision_supplied, brass_revision_number_t revision_)
 {
     LOGCALL(DB, bool, "BrassTable::do_open_to_read", revision_supplied | revision_);
-    if (handle == -2) {
-	BrassTable::throw_database_closed();
+	if ( database_shutdown ) {
+		BrassTable::throw_database_closed();
     }
-    handle = ::open((name + "DB").c_str(), O_RDONLY | O_BINARY);
-    if (handle < 0) {
+    file_handle = file_system.open( name + "DB", O_RDONLY | O_BINARY, 0666);
+    if ( !file_handle.is_opened() ) {
 	if (lazy) {
 	    // This table is optional when reading!
 	    revision_number = revision_;
@@ -2001,8 +1935,7 @@ BrassTable::do_open_to_read(bool revision_supplied, brass_revision_number_t revi
     }
 
     if (!basic_open(revision_supplied, revision_)) {
-	::close(handle);
-	handle = -1;
+	file_handle.close();
 	if (revision_supplied) {
 	    // The requested revision was not available.
 	    // This could be because the database was modified underneath us, or

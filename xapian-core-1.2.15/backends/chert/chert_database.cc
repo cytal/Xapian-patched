@@ -61,10 +61,6 @@
 #include "utils.h"
 #include "valuestats.h"
 
-#ifdef __WIN32__
-# include "msvc_posix_wrapper.h"
-#endif
-
 #include "safeerrno.h"
 #include "safesysstat.h"
 #include <sys/types.h>

@@ -47,8 +47,8 @@ class BrassRecordTable : public BrassTable {
 	 *  @param readonly_      - whether to open the table for read only
 	 *                          access.
 	 */
-	BrassRecordTable(const string & path_, bool readonly_)
-	    : BrassTable("record", path_ + "/record.", readonly_, Z_DEFAULT_STRATEGY) { }
+	BrassRecordTable(const string & path_, bool readonly_, Xapian::FileSystem file_system_)
+	    : BrassTable("record", path_ + "/record.", readonly_, Z_DEFAULT_STRATEGY, false, file_system_) { }
 
 	/** Retrieve a document from the table.
 	 */

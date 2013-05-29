@@ -67,7 +67,7 @@ DatabaseReplicator::open(const string & path, FileSystem file_system)
 
 #ifdef XAPIAN_HAS_BRASS_BACKEND
     if (file_system.file_exist(path + "/iambrass")) {
-	return new BrassDatabaseReplicator(path);
+	return new BrassDatabaseReplicator(path,file_system);
     }
 #endif
 

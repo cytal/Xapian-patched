@@ -199,9 +199,9 @@ BrassTableCheck::block_check(Brass::Cursor * C_, int j, int opts)
 
 void
 BrassTableCheck::check(const char * tablename, const string & path, int opts,
-		       ostream &out)
+					   ostream &out, Xapian::FileSystem file_system)
 {
-    BrassTableCheck B(tablename, path, false, out);
+    BrassTableCheck B(tablename, path, false, out, file_system);
     B.open(); // throws exception if open fails
     Brass::Cursor * C = B.C;
 

@@ -29,9 +29,6 @@
 #include <xapian/error.h>
 
 #include "safeerrno.h"
-#ifdef __WIN32__
-# include "msvc_posix_wrapper.h"
-#endif
 
 #include "omassert.h"
 #include "stringutils.h" // For STRINGIZE().

@@ -92,7 +92,7 @@ namespace Brass {
  * @param dir  pathname of the directory containing the database.
  */
 XAPIAN_VISIBILITY_DEFAULT
-Database open(const std::string &dir);
+Database open(const std::string &dir, FileSystem file_system = FileSystem());
 
 /** Construct a Database object for update access to a Brass database.
  *
@@ -114,7 +114,7 @@ Database open(const std::string &dir);
  */
 XAPIAN_VISIBILITY_DEFAULT
 WritableDatabase
-open(const std::string &dir, int action, int block_size = 8192);
+open(const std::string &dir, int action, int block_size = 8192, Xapian::FileSystem file_system = Xapian::FileSystem());
 
 }
 #endif

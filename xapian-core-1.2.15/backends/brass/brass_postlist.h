@@ -65,8 +65,8 @@ class BrassPostListTable : public BrassTable {
 	 *  @param readonly_      - whether to open the table for read only
 	 *                          access.
 	 */
-	BrassPostListTable(const string & path_, bool readonly_)
-	    : BrassTable("postlist", path_ + "/postlist.", readonly_),
+	BrassPostListTable(const string & path_, bool readonly_, Xapian::FileSystem file_system_)
+	    : BrassTable("postlist", path_ + "/postlist.", readonly_, DONT_COMPRESS, false, file_system_),
 	      doclen_pl()
 	{ }
 

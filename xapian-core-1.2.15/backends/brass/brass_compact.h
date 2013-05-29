@@ -33,6 +33,6 @@ compact_brass(Xapian::Compactor & compactor,
 	      const char * destdir, const std::vector<std::string> & sources,
 	      const std::vector<Xapian::docid> & offset, size_t block_size,
 	      Xapian::Compactor::compaction_level compaction, bool multipass,
-	      Xapian::docid last_docid);
+	      Xapian::docid last_docid, Xapian::FileSystem file_system);
 
 #endif

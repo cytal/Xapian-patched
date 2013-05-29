@@ -43,10 +43,6 @@
 #include "stringutils.h"
 #include "utils.h"
 
-#ifdef __WIN32__
-# include "msvc_posix_wrapper.h"
-#endif
-
 #include <cstdio> // For rename().
 
 using namespace std;

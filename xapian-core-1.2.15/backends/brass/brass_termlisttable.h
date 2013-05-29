@@ -48,9 +48,9 @@ class BrassTermListTable : public BrassLazyTable {
      *  @param dbdir	    The directory the brass database is stored in.
      *  @param readonly	    true if we're opening read-only, else false.
      */
-    BrassTermListTable(const std::string & dbdir, bool readonly)
+	BrassTermListTable(const std::string & dbdir, bool readonly, Xapian::FileSystem file_system_)
 	: BrassLazyTable("termlist", dbdir + "/termlist.", readonly,
-			 Z_DEFAULT_STRATEGY) { }
+			 Z_DEFAULT_STRATEGY, file_system_) { }
 
     /** Set the termlist data for document @a did.
      *

@@ -49,9 +49,9 @@ class BrassPositionListTable : public BrassLazyTable {
      *  @param dbdir		The directory the brass database is stored in.
      *  @param readonly		true if we're opening read-only, else false.
      */
-    BrassPositionListTable(const string & dbdir, bool readonly)
+	BrassPositionListTable(const string & dbdir, bool readonly, Xapian::FileSystem file_system_)
 	: BrassLazyTable("position", dbdir + "/position.", readonly,
-			 DONT_COMPRESS) { }
+			 DONT_COMPRESS, file_system_) { }
 
     /** Set the position list for term tname in document did.
      *

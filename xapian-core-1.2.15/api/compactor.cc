@@ -42,9 +42,6 @@
 #include "noreturn.h"
 #include "omassert.h"
 #include "fileutils.h"
-#ifdef __WIN32__
-# include "msvc_posix_wrapper.h"
-#endif
 #include "stringutils.h"
 #include "str.h"
 #include "utils.h"
@@ -477,7 +474,7 @@ Compactor::Internal::compact(Xapian::Compactor & compactor)
     } else if (backend == BRASS) {
 #ifdef XAPIAN_HAS_BRASS_BACKEND
 	compact_brass(compactor, destdir.c_str(), sources, offset, block_size,
-		      compaction, multipass, last_docid);
+		      compaction, multipass, last_docid, file_system);
 #else
 	throw Xapian::FeatureUnavailableError("Brass backend disabled at build time");
 #endif
@@ -503,7 +500,7 @@ Compactor::Internal::compact(Xapian::Compactor & compactor)
 #endif
     } else if (backend == BRASS) {
 #ifdef XAPIAN_HAS_BRASS_BACKEND
-	BrassVersion(destdir).create();
+	BrassVersion(destdir,file_system).create();
 #else
 	// Handled above.
 	exit(1);

@@ -47,9 +47,9 @@ class BrassSynonymTable : public BrassLazyTable {
      *  @param dbdir		The directory the brass database is stored in.
      *  @param readonly		true if we're opening read-only, else false.
      */
-    BrassSynonymTable(const std::string & dbdir, bool readonly)
+	BrassSynonymTable(const std::string & dbdir, bool readonly, Xapian::FileSystem file_system_)
 	: BrassLazyTable("synonym", dbdir + "/synonym.", readonly,
-			 Z_DEFAULT_STRATEGY) { }
+			 Z_DEFAULT_STRATEGY, file_system_) { }
 
     // Merge in batched-up changes.
     void merge_changes();

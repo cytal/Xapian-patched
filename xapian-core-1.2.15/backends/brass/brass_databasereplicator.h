@@ -30,6 +30,7 @@ class BrassDatabaseReplicator : public Xapian::DatabaseReplicator {
 	/** Path of database.
 	 */
 	std::string db_dir;
+	mutable Xapian::FileSystem	file_system;
 
 	/** Process a chunk which holds a base block.
 	 */
@@ -47,7 +48,7 @@ class BrassDatabaseReplicator : public Xapian::DatabaseReplicator {
 					    double end_time) const;
 
     public:
-	BrassDatabaseReplicator(const std::string & db_dir_);
+	BrassDatabaseReplicator(const std::string & db_dir_, Xapian::FileSystem file_system_);
 
 	/** Virtual methods of DatabaseReplicator. */
 	//@{

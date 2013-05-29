@@ -198,9 +198,9 @@ ChertTableCheck::block_check(Cursor * C_, int j, int opts)
 
 void
 ChertTableCheck::check(const char * tablename, const string & path, int opts,
-		       ostream &out)
+		       ostream &out, Xapian::FileSystem file_system)
 {
-    ChertTableCheck B(tablename, path, false, out);
+    ChertTableCheck B(tablename, path, false, out, file_system);
     B.open(); // throws exception if open fails
     Cursor * C = B.C;
 

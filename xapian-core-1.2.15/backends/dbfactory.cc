@@ -57,15 +57,15 @@ namespace Xapian {
 
 #ifdef XAPIAN_HAS_BRASS_BACKEND
 Database
-Brass::open(const string &dir) {
+Brass::open(const string &dir, FileSystem file_system) {
     LOGCALL_STATIC(API, Database, "Brass::open", dir);
-    RETURN(Database(new BrassDatabase(dir)));
+    RETURN(Database(new BrassDatabase(dir, XAPIAN_DB_READONLY, 0u, file_system)));
 }
 
 WritableDatabase
-Brass::open(const string &dir, int action, int block_size) {
+Brass::open(const string &dir, int action, int block_size,FileSystem file_system) {
     LOGCALL_STATIC(API, WritableDatabase, "Brass::open", dir | action | block_size);
-    RETURN(WritableDatabase(new BrassWritableDatabase(dir, action, block_size)));
+    RETURN(WritableDatabase(new BrassWritableDatabase(dir, action, block_size, file_system)));
 }
 #endif
 
@@ -379,7 +379,7 @@ Database::Database(const string &path, FileSystem file_system)
 
 #ifdef XAPIAN_HAS_BRASS_BACKEND
 	if ( file_system.path_exist( path + "/iambrass" ) ) {
-		internal.push_back(new BrassDatabase(path));
+		internal.push_back(new BrassDatabase(path, XAPIAN_DB_READONLY, 0u, file_system));
 		return;
     }
 #endif
@@ -494,7 +494,7 @@ WritableDatabase::WritableDatabase(const std::string &path, int action, FileSyst
 #ifdef XAPIAN_HAS_BRASS_BACKEND
 	case BRASS:
 brass:
-	    internal.push_back(new BrassWritableDatabase(path, action, 8192));
+	    internal.push_back(new BrassWritableDatabase(path, action, 8192, file_system));
 	    break;
 #endif
     }

@@ -27,7 +27,6 @@
 #include <xapian/filesystem.h>
 #include <xapian/error.h>
 
-#include <stdio.h>
 #include <cstring>
 #include <string>
 #include <sstream>

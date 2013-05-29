@@ -26,13 +26,12 @@
 
 #include "xapian/error.h"
 
-#include "../flint_lock.h"
 #include "brass_record.h"
 #include "brass_replicate_internal.h"
 #include "brass_types.h"
 #include "brass_version.h"
 #include "debuglog.h"
-#include "io_utils.h"
+//#include "io_utils.h"
 #include "pack.h"
 #include "remoteconnection.h"
 #include "replicationprotocol.h"
@@ -41,17 +40,13 @@
 #include "stringutils.h"
 #include "utils.h"
 
-#ifdef __WIN32__
-# include "msvc_posix_wrapper.h"
-#endif
-
 #include <cstdio> // For rename().
 
 using namespace std;
 using namespace Xapian;
 
-BrassDatabaseReplicator::BrassDatabaseReplicator(const string & db_dir_)
-	: db_dir(db_dir_)
+BrassDatabaseReplicator::BrassDatabaseReplicator(const string & db_dir_, Xapian::FileSystem file_system_)
+	: db_dir(db_dir_), file_system(file_system_)
 {
 }
 
@@ -80,7 +75,7 @@ BrassDatabaseReplicator::check_revision_at_least(const string & rev,
 }
 
 void
-BrassDatabaseReplicator::process_changeset_chunk_base(const string & tablename,
+BrassDatabaseReplicator::process_changeset_chunk_base(const string & tablename, 
 						      string & buf,
 						      RemoteConnection & conn,
 						      double end_time) const
@@ -112,34 +107,26 @@ BrassDatabaseReplicator::process_changeset_chunk_base(const string & tablename,
     // Write base_size bytes from start of buf to base file for tablename
     string tmp_path = db_dir + "/" + tablename + "tmp";
     string base_path = db_dir + "/" + tablename + ".base" + letter;
-#ifdef __WIN32__
-    int fd = msvc_posix_open(tmp_path.c_str(), O_WRONLY | O_CREAT | O_TRUNC | O_BINARY);
-#else
-    int fd = ::open(tmp_path.c_str(), O_WRONLY | O_CREAT | O_TRUNC | O_BINARY, 0666);
-#endif
-    if (fd == -1) {
+
+	Xapian::File fd = file_system.open( tmp_path, O_WRONLY | O_CREAT | O_TRUNC | O_BINARY, 0666);
+    if ( !fd.is_opened() ) {
 	string msg = "Failed to open ";
 	msg += tmp_path;
 	throw DatabaseError(msg, errno);
     }
     {
-	fdcloser closer(fd);
 
-	io_write(fd, buf.data(), base_size);
-	io_sync(fd);
+	fd.io_write( buf.data(), base_size);
+	fd.io_sync();
     }
-#if defined __WIN32__
-    if (msvc_posix_rename(tmp_path.c_str(), base_path.c_str()) < 0) {
-#else
-    if (rename(tmp_path.c_str(), base_path.c_str()) < 0) {
-#endif
+	if ( !file_system.rename( tmp_path, base_path ) ) {
 	// With NFS, rename() failing may just mean that the server crashed
 	// after successfully renaming, but before reporting this, and then
 	// the retried operation fails.  So we need to check if the source
 	// file still exists, which we do by calling unlink(), since we want
 	// to remove the temporary file anyway.
 	int saved_errno = errno;
-	if (unlink(tmp_path) == 0 || errno != ENOENT) {
+	if ( file_system.unlink(tmp_path) ) {
 	    string msg("Couldn't update base file ");
 	    msg += tablename;
 	    msg += ".base";
@@ -166,18 +153,13 @@ BrassDatabaseReplicator::process_changeset_chunk_blocks(const string & tablename
     buf.erase(0, ptr - buf.data());
 
     string db_path = db_dir + "/" + tablename + ".DB";
-#ifdef __WIN32__
-    int fd = msvc_posix_open(db_path.c_str(), O_WRONLY | O_CREAT | O_BINARY);
-#else
-    int fd = ::open(db_path.c_str(), O_WRONLY | O_CREAT | O_BINARY, 0666);
-#endif
-    if (fd == -1) {
+	Xapian::File fd = file_system.open( db_path, O_WRONLY | O_CREAT | O_BINARY, 0666);
+    if ( !fd.is_opened() ) {
 	string msg = "Failed to open ";
 	msg += db_path;
 	throw DatabaseError(msg, errno);
     }
     {
-	fdcloser closer(fd);
 
 	while (true) {
 	    conn.get_message_chunk(buf, REASONABLE_CHANGESET_SIZE, end_time);
@@ -198,16 +180,16 @@ BrassDatabaseReplicator::process_changeset_chunk_blocks(const string & tablename
 
 	    // Write the block.
 	    // FIXME - should use pwrite if that's available.
-	    if (lseek(fd, off_t(changeset_blocksize) * block_number, SEEK_SET) == -1) {
+	    if ( fd.seek( off_t(changeset_blocksize) * block_number, SEEK_SET) == -1) {
 		string msg = "Failed to seek to block ";
 		msg += str(block_number);
 		throw DatabaseError(msg, errno);
 	    }
-	    io_write(fd, buf.data(), changeset_blocksize);
+	    fd.write_data( buf.data(), changeset_blocksize);
 
 	    buf.erase(0, changeset_blocksize);
 	}
-	io_sync(fd);
+	fd.io_sync();
     }
 }
 
@@ -219,10 +201,10 @@ BrassDatabaseReplicator::apply_changeset_from_conn(RemoteConnection & conn,
     LOGCALL(DB, string, "BrassDatabaseReplicator::apply_changeset_from_conn", conn | end_time | valid);
 
     // Lock the database to perform modifications.
-    FlintLock lock(db_dir);
+	Xapian::FileLock	lock(db_dir, file_system);
     string explanation;
-    FlintLock::reason why = lock.lock(true, explanation);
-    if (why != FlintLock::SUCCESS) {
+	Xapian::FileSystem::reason why = lock.lock(true, explanation);
+    if (why != Xapian::FileSystem::SUCCESS) {
 	lock.throw_databaselockerror(why, db_dir, explanation);
     }
 
@@ -268,7 +250,7 @@ BrassDatabaseReplicator::apply_changeset_from_conn(RemoteConnection & conn,
 	// If the database was not known to be valid, we cannot
 	// reliably determine its revision number, so must skip this
 	// check.
-	BrassRecordTable record_table(db_dir, true);
+	BrassRecordTable record_table(db_dir, true, file_system);
 	record_table.open();
 	if (startrev != record_table.get_open_revision_number())
 	    throw NetworkError("Changeset supplied is for wrong revision number");
@@ -341,7 +323,7 @@ string
 BrassDatabaseReplicator::get_uuid() const
 {
     LOGCALL(DB, string, "BrassDatabaseReplicator::get_uuid", NO_ARGS);
-    BrassVersion version_file(db_dir);
+    BrassVersion version_file(db_dir, file_system);
     try {
 	version_file.read_and_check();
     } catch (const Xapian::DatabaseError &) {

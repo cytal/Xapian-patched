@@ -47,7 +47,6 @@
 #include "brass_valuelist.h"
 #include "brass_values.h"
 #include "debuglog.h"
-#include "io_utils.h"
 #include "pack.h"
 #include "remoteconnection.h"
 #include "replication.h"
@@ -55,15 +54,10 @@
 #include "serialise.h"
 #include "str.h"
 #include "stringutils.h"
-#include "utils.h"
+//#include "utils.h"
 #include "valuestats.h"
 
-#ifdef __WIN32__
-# include "msvc_posix_wrapper.h"
-#endif
-
 #include "safeerrno.h"
-#include "safesysstat.h"
 #include <sys/types.h>
 
 #include <algorithm>
@@ -100,18 +94,19 @@ const int MAX_OPEN_RETRIES = 100;
  * to the tables.
  */
 BrassDatabase::BrassDatabase(const string &brass_dir, int action,
-			     unsigned int block_size)
+							unsigned int block_size, Xapian::FileSystem file_system_)
 	: db_dir(brass_dir),
+	  file_system( file_system_ ),
 	  readonly(action == XAPIAN_DB_READONLY),
-	  version_file(db_dir),
-	  postlist_table(db_dir, readonly),
-	  position_table(db_dir, readonly),
-	  termlist_table(db_dir, readonly),
+	  version_file(db_dir, file_system_),
+	  postlist_table(db_dir, readonly, file_system_),
+	  position_table(db_dir, readonly, file_system_),
+	  termlist_table(db_dir, readonly, file_system_),
 	  value_manager(&postlist_table, &termlist_table),
-	  synonym_table(db_dir, readonly),
-	  spelling_table(db_dir, readonly),
-	  record_table(db_dir, readonly),
-	  lock(db_dir),
+	  synonym_table(db_dir, readonly, file_system_),
+	  spelling_table(db_dir, readonly, file_system_),
+	  record_table(db_dir, readonly, file_system_),
+	  lock(db_dir, file_system_),
 	  max_changesets(0)
 {
     LOGCALL_CTOR(DB, "BrassDatabase", brass_dir | action | block_size);
@@ -126,10 +121,11 @@ BrassDatabase::BrassDatabase(const string &brass_dir, int action,
 	// Create the directory for the database, if it doesn't exist
 	// already.
 	bool fail = false;
-	struct stat statbuf;
-	if (stat(db_dir, &statbuf) == 0) {
-	    if (!S_ISDIR(statbuf.st_mode)) fail = true;
-	} else if (errno != ENOENT || mkdir(db_dir, 0755) == -1) {
+	Xapian::FileState	statbuf;
+	if ( file_system.path_exist(db_dir, &statbuf) ) {
+		if ( !statbuf.isDir() ) 
+			fail = true;
+	} else if ( !file_system.make_dir(db_dir, 0755) ) {
 	    fail = true;
 	}
 	if (fail) {
@@ -334,15 +330,9 @@ BrassDatabase::get_changeset_revisions(const string & path,
 				       brass_revision_number_t * startrev,
 				       brass_revision_number_t * endrev) const
 {
-    int changes_fd = -1;
-#ifdef __WIN32__
-    changes_fd = msvc_posix_open(path.c_str(), O_RDONLY | O_BINARY);
-#else
-    changes_fd = open(path.c_str(), O_RDONLY | O_BINARY);
-#endif
-    fdcloser closer(changes_fd);
+	Xapian::File changes_fd = file_system.open( path, O_RDONLY | O_BINARY, 0666 );
 
-    if (changes_fd < 0) {
+    if ( !changes_fd.is_opened() ) {
 	string message = string("Couldn't open changeset ")
 		+ path + " to read";
 	throw Xapian::DatabaseError(message, errno);
@@ -350,7 +340,7 @@ BrassDatabase::get_changeset_revisions(const string & path,
 
     char buf[REASONABLE_CHANGESET_SIZE];
     const char *start = buf;
-    const char *end = buf + io_read(changes_fd, buf,
+    const char *end = buf + changes_fd.io_read( buf,
 				    REASONABLE_CHANGESET_SIZE, 0);
     if (strncmp(start, CHANGES_MAGIC_STRING,
 		CONST_STRLEN(CHANGES_MAGIC_STRING)) != 0) {
@@ -393,7 +383,7 @@ BrassDatabase::set_revision_number(brass_revision_number_t new_revision)
     spelling_table.flush_db();
     record_table.flush_db();
 
-    int changes_fd = -1;
+	Xapian::File changes_fd;
     string changes_name;
     
     // always check max_changesets for modification since last revision
@@ -409,12 +399,9 @@ BrassDatabase::set_revision_number(brass_revision_number_t new_revision)
 	if (old_revision) {
 	    // Don't generate a changeset for the first revision.
 	    changes_name = db_dir + "/changes" + str(old_revision);
-#ifdef __WIN32__
-	    changes_fd = msvc_posix_open(changes_name.c_str(), O_WRONLY | O_CREAT | O_TRUNC | O_BINARY);
-#else
-	    changes_fd = open(changes_name.c_str(), O_WRONLY | O_CREAT | O_TRUNC | O_BINARY, 0666);
-#endif
-	    if (changes_fd < 0) {
+		changes_fd = file_system.open( changes_name, O_WRONLY | O_CREAT | O_TRUNC | O_BINARY, 0666);
+
+	    if ( !changes_fd.is_opened() ) {
 		string message = string("Couldn't open changeset ")
 			+ changes_name + " to write";
 		throw Xapian::DatabaseError(message, errno);
@@ -423,8 +410,7 @@ BrassDatabase::set_revision_number(brass_revision_number_t new_revision)
     }
 
     try {
-	fdcloser closefd(changes_fd);
-	if (changes_fd >= 0) {
+	if ( changes_fd.is_opened() ) {
 	    string buf;
 	    brass_revision_number_t old_revision = get_revision_number();
 	    buf += CHANGES_MAGIC_STRING;
@@ -438,7 +424,7 @@ BrassDatabase::set_revision_number(brass_revision_number_t new_revision)
 	    buf += '\x01';
 #endif
 
-	    io_write(changes_fd, buf.data(), buf.size());
+	    changes_fd.io_write(buf.data(), buf.size());
 
 	    // Write the changes to the blocks in the tables.  Do the postlist
 	    // table last, so that ends up cached the most, if the cache
@@ -459,7 +445,7 @@ BrassDatabase::set_revision_number(brass_revision_number_t new_revision)
 	spelling_table.commit(new_revision, changes_fd);
 
 	string changes_tail; // Data to be appended to the changes file
-	if (changes_fd >= 0) {
+	if (changes_fd.is_opened()) {
 	    changes_tail += '\0';
 	    pack_uint(changes_tail, new_revision);
 	}
@@ -467,8 +453,8 @@ BrassDatabase::set_revision_number(brass_revision_number_t new_revision)
 
     } catch (...) {
 	// Remove the changeset, if there was one.
-	if (changes_fd >= 0) {
-	    (void)io_unlink(changes_name);
+	if (changes_fd.is_opened()) {
+	    file_system.unlink(changes_name);
 	}
 
 	throw;
@@ -476,14 +462,14 @@ BrassDatabase::set_revision_number(brass_revision_number_t new_revision)
     
     // Only remove the oldest_changeset if we successfully write a new changeset and
     // we have a revision number greater than max_changesets
-    if (changes_fd >= 0 && max_changesets < new_revision) {
+    if (changes_fd.is_opened() && max_changesets < new_revision) {
 	// use the oldest changeset we know about to begin deleting to the stop_changeset
 	// if nothing went wrong only one file should be deleted, otherwise
 	// attempts will be made to clean up more
 	brass_revision_number_t oldest_changeset = stats.get_oldest_changeset();
 	brass_revision_number_t stop_changeset = new_revision - max_changesets;
 	while (oldest_changeset < stop_changeset) {
-	    if (io_unlink(db_dir + "/changes" + str(oldest_changeset))) {
+	    if ( file_system.unlink(db_dir + "/changes" + str(oldest_changeset))) {
 		LOGLINE(DB, "Removed changeset " << oldest_changeset);
 	    } else {
 		LOGLINE(DB, "Skipping changeset " << oldest_changeset << 
@@ -519,9 +505,9 @@ BrassDatabase::get_database_write_lock(bool creating)
 {
     LOGCALL_VOID(DB, "BrassDatabase::get_database_write_lock", creating);
     string explanation;
-    FlintLock::reason why = lock.lock(true, explanation);
-    if (why != FlintLock::SUCCESS) {
-	if (why == FlintLock::UNKNOWN && !creating && !database_exists()) {
+    Xapian::FileSystem::reason why = lock.lock(true, explanation);
+    if (why != Xapian::FileSystem::SUCCESS) {
+	if (why == Xapian::FileSystem::UNKNOWN && !creating && !database_exists()) {
 	    string msg("No brass database found at path `");
 	    msg += db_dir;
 	    msg += '\'';
@@ -559,13 +545,9 @@ BrassDatabase::send_whole_database(RemoteConnection & conn, double end_time)
     for (const char * p = filenames; *p; p += *p + 1) {
 	string leaf(p + 1, size_t(static_cast<unsigned char>(*p)));
 	filepath.replace(db_dir.size() + 1, string::npos, leaf);
-#ifdef __WIN32__
-	int fd = msvc_posix_open(filepath.c_str(), O_RDONLY | O_BINARY);
-#else
-	int fd = open(filepath.c_str(), O_RDONLY | O_BINARY);
-#endif
-	if (fd >= 0) {
-	    fdcloser closefd(fd);
+
+	Xapian::File fd = file_system.open( filepath, O_RDONLY | O_BINARY, 0666 );
+	if (fd.is_opened()) {
 	    conn.send_message(REPL_REPLY_DB_FILENAME, leaf, end_time);
 	    conn.send_file(REPL_REPLY_DB_FILEDATA, fd, end_time);
 	}
@@ -664,13 +646,8 @@ BrassDatabase::write_changesets_to_fd(int fd,
 
 	    // Look for the changeset for revision start_rev_num.
 	    string changes_name = db_dir + "/changes" + str(start_rev_num);
-#ifdef __WIN32__
-	    int fd_changes = msvc_posix_open(changes_name.c_str(), O_RDONLY | O_BINARY);
-#else
-	    int fd_changes = open(changes_name.c_str(), O_RDONLY | O_BINARY);
-#endif
-	    if (fd_changes >= 0) {
-		fdcloser closefd(fd_changes);
+		Xapian::File fd_changes = file_system.open( changes_name, O_RDONLY | O_BINARY, 0666);
+	    if (fd_changes.is_opened() ) {
 
 		// Send it, and also update start_rev_num to the new value
 		// specified in the changeset.
@@ -1042,8 +1019,8 @@ BrassDatabase::throw_termlist_table_close_exception() const
 ///////////////////////////////////////////////////////////////////////////
 
 BrassWritableDatabase::BrassWritableDatabase(const string &dir, int action,
-					       int block_size)
-	: BrassDatabase(dir, action, block_size),
+											 int block_size, Xapian::FileSystem file_system_)
+	: BrassDatabase(dir, action, block_size, file_system_),
 	  change_count(0),
 	  flush_threshold(0),
 	  modify_shortcut_document(NULL),

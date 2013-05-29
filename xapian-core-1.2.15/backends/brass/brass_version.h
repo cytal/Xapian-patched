@@ -24,6 +24,7 @@
 #include <cstring>
 #include <string>
 
+#include <xapian/filesystem.h>
 #include "common/safeuuid.h"
 
 /** The BrassVersion class manages the "iambrass" file.
@@ -34,6 +35,7 @@
 class BrassVersion {
     /// The filename of the version file.
     std::string filename;
+	mutable Xapian::FileSystem	file_system;
 
     /** The UUID of this database.
      *
@@ -42,7 +44,7 @@ class BrassVersion {
     mutable uuid_t uuid;
 
   public:
-    BrassVersion(const std::string & dbdir) : filename(dbdir) {
+    BrassVersion(const std::string & dbdir, Xapian::FileSystem file_system_) : filename(dbdir), file_system(file_system_) {
 	filename += "/iambrass";
     }
 

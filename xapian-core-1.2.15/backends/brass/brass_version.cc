@@ -26,14 +26,10 @@
 #include <xapian/error.h>
 
 #include "brass_version.h"
-#include "io_utils.h"
+//#include "io_utils.h"
 #include "omassert.h"
 #include "stringutils.h" // For STRINGIZE() and CONST_STRLEN().
 #include "str.h"
-
-#ifdef __WIN32__
-# include "msvc_posix_wrapper.h"
-#endif
 
 #include <cstdio> // For rename().
 #include <cstring> // For memcmp() and memcpy().
@@ -72,35 +68,30 @@ BrassVersion::create()
     uuid_generate(uuid);
     memcpy(buf + MAGIC_LEN + 4, (void*)uuid, 16);
 
-    int fd = ::open(filename.c_str(), O_WRONLY|O_CREAT|O_TRUNC|O_BINARY, 0666);
+	Xapian::File fd = file_system.open( filename, O_WRONLY|O_CREAT|O_TRUNC|O_BINARY, 0666);
 
-    if (fd < 0) {
+	if ( !fd.is_opened() ) {
 	string msg("Failed to create brass version file: ");
 	msg += filename;
 	throw Xapian::DatabaseOpeningError(msg, errno);
     }
 
     try {
-	io_write(fd, buf, VERSIONFILE_SIZE);
+		fd.io_write( buf, VERSIONFILE_SIZE);
     } catch (...) {
-	(void)close(fd);
+	fd.close();
 	throw;
     }
 
-    io_sync(fd);
-    if (close(fd) != 0) {
-	string msg("Failed to create brass version file: ");
-	msg += filename;
-	throw Xapian::DatabaseOpeningError(msg, errno);
-    }
+	fd.io_sync();
 }
 
 void
 BrassVersion::read_and_check()
 {
-    int fd = ::open(filename.c_str(), O_RDONLY|O_BINARY);
+	Xapian::File fd = file_system.open( filename, O_WRONLY|O_CREAT|O_TRUNC|O_BINARY, 0666);
 
-    if (fd < 0) {
+    if ( !fd.is_opened() ) {
 	string msg = filename;
 	msg += ": Failed to open brass version file for reading";
 	throw Xapian::DatabaseOpeningError(msg, errno);
@@ -110,12 +101,12 @@ BrassVersion::read_and_check()
     char buf[VERSIONFILE_SIZE + 1];
     size_t size;
     try {
-	size = io_read(fd, buf, VERSIONFILE_SIZE + 1, 0);
+	size = fd.io_read( buf, VERSIONFILE_SIZE + 1, 0);
     } catch (...) {
-	(void)close(fd);
+	fd.close();
 	throw;
     }
-    (void)close(fd);
+	fd.close();
 
     if (size != VERSIONFILE_SIZE) {
 	CompileTimeAssert(VERSIONFILE_SIZE == VERSIONFILE_SIZE_LITERAL);

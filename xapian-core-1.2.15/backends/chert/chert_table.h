@@ -408,7 +408,6 @@ class XAPIAN_VISIBILITY_DEFAULT ChertTable {
 	 *
 	 *  @param changes_fd  The file descriptor to write changes to.
 	 */
-	void write_changed_blocks(int changes_fd);
 	void write_changed_blocks(Xapian::File & changes_file);
 
 	/** Cancel any outstanding changes.

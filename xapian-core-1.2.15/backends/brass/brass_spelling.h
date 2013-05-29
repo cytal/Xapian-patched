@@ -81,9 +81,9 @@ class BrassSpellingTable : public BrassLazyTable {
      *  @param dbdir		The directory the brass database is stored in.
      *  @param readonly		true if we're opening read-only, else false.
      */
-    BrassSpellingTable(const std::string & dbdir, bool readonly)
+	BrassSpellingTable(const std::string & dbdir, bool readonly, Xapian::FileSystem file_system_)
 	: BrassLazyTable("spelling", dbdir + "/spelling.", readonly,
-			 Z_DEFAULT_STRATEGY) { }
+			 Z_DEFAULT_STRATEGY, file_system_) { }
 
     // Merge in batched-up changes.
     void merge_changes();

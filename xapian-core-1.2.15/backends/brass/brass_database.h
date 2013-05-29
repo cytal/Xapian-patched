@@ -35,7 +35,6 @@
 #include "brass_termlisttable.h"
 #include "brass_values.h"
 #include "brass_version.h"
-#include "../flint_lock.h"
 #include "brass_types.h"
 #include "valuestats.h"
 
@@ -60,6 +59,7 @@ class BrassDatabase : public Xapian::Database::Internal {
 	/** Directory to store databases in.
 	 */
 	std::string db_dir;
+	mutable Xapian::FileSystem	file_system;
 
 	/** Whether the database is readonly.
 	 */
@@ -109,7 +109,8 @@ class BrassDatabase : public Xapian::Database::Internal {
 	BrassRecordTable record_table;
 
 	/// Lock object.
-	FlintLock lock;
+	//FlintLock lock;
+	Xapian::FileLock	lock;
 
 	/** The maximum number of changesets which should be kept in the
 	 *  database. */
@@ -239,8 +240,8 @@ class BrassDatabase : public Xapian::Database::Internal {
 	 *                    correct value, when the database is being
 	 *                    created.
 	 */
-	BrassDatabase(const string &db_dir_, int action = XAPIAN_DB_READONLY,
-		       unsigned int block_size = 0u);
+	BrassDatabase(const string &db_dir_, int action /*= XAPIAN_DB_READONLY*/,
+					unsigned int block_size /*= 0u*/, Xapian::FileSystem file_system_ /*= Xapian::FileSystem() */ );
 
 	~BrassDatabase();
 
@@ -371,7 +372,7 @@ class BrassWritableDatabase : public BrassDatabase {
 	 *
 	 *  @param dir directory holding brass tables
 	 */
-	BrassWritableDatabase(const string &dir, int action, int block_size);
+	BrassWritableDatabase(const string &dir, int action, int block_size, Xapian::FileSystem file_system_);
 
 	~BrassWritableDatabase();
 

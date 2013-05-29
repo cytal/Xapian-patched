@@ -25,6 +25,7 @@
 
 #include <xapian/error.h>
 #include <xapian/visibility.h>
+#include <xapian/filesystem.h>
 
 #include "brass_types.h"
 #include "brass_btreebase.h"
@@ -317,8 +318,8 @@ class XAPIAN_VISIBILITY_DEFAULT BrassTable {
 	 *			needed.
 	 */
 	BrassTable(const char * tablename_, const std::string & path_,
-		   bool readonly_, int compress_strategy_ = DONT_COMPRESS,
-		   bool lazy = false);
+		   bool readonly_, int compress_strategy_ /*= DONT_COMPRESS*/,
+		   bool lazy /*= false*/, Xapian::FileSystem file_system_ /*= Xapian::FileSystem()*/ );
 
 	/** Close the Btree.
 	 *
@@ -371,7 +372,7 @@ class XAPIAN_VISIBILITY_DEFAULT BrassTable {
 	 *
 	 *  NB If the table is lazy and doesn't yet exist, returns false.
 	 */
-	bool is_open() const { return handle >= 0; }
+	bool is_open() const { return file_handle.is_opened(); }
 
 	/** Flush any outstanding changes to the DB file of the table.
 	 *
@@ -396,14 +397,18 @@ class XAPIAN_VISIBILITY_DEFAULT BrassTable {
 	 *  @param changes_fd  The file descriptor to write changes to.
 	 *	    Defaults to -1, meaning no changes will be written.
 	 */
-	void commit(brass_revision_number_t revision, int changes_fd = -1,
-		    const std::string * changes_tail = NULL);
+	void commit(brass_revision_number_t revision, Xapian::File & changes_file,
+		const std::string * changes_tail = NULL);
+	void commit(brass_revision_number_t revision, const std::string * changes_tail = NULL) {
+		Xapian::File dummy;
+		commit( revision, dummy, changes_tail );
+	}
 
 	/** Append the list of blocks changed to a changeset file.
 	 *
 	 *  @param changes_fd  The file descriptor to write changes to.
 	 */
-	void write_changed_blocks(int changes_fd);
+	void write_changed_blocks(Xapian::File & changes_file);
 
 	/** Cancel any outstanding changes.
 	 *
@@ -687,7 +692,10 @@ class XAPIAN_VISIBILITY_DEFAULT BrassTable {
 	 *
 	 *  If close() has been called, this will be -2.
 	 */
-	int handle;
+	//int handle;
+	mutable Xapian::File		file_handle;
+	mutable Xapian::FileSystem	file_system;
+	bool						database_shutdown;
 
 	/// number of levels, counting from 0
 	int level;
