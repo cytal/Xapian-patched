@@ -30,6 +30,7 @@
 #include <cstring>
 #include <string>
 #include <sstream>
+#include <stdio.h>
 
 #ifdef __WIN32__
 	# include "msvc_posix_wrapper.h"
