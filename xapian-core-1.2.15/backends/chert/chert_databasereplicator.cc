@@ -27,13 +27,12 @@
 
 #include "xapian/error.h"
 
-#include "../flint_lock.h"
 #include "chert_record.h"
 #include "chert_replicate_internal.h"
 #include "chert_types.h"
 #include "chert_version.h"
 #include "debuglog.h"
-#include "io_utils.h"
+#include "safefcntl.h"
 #include "pack.h"
 #include "remoteconnection.h"
 #include "replicate_utils.h"

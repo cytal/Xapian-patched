@@ -26,7 +26,7 @@
 #include <xapian/error.h>
 
 #include "brass_version.h"
-//#include "io_utils.h"
+#include "safefcntl.h"
 #include "omassert.h"
 #include "stringutils.h" // For STRINGIZE() and CONST_STRLEN().
 #include "str.h"

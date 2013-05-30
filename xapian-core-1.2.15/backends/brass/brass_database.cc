@@ -37,7 +37,6 @@
 #include "brass_alltermslist.h"
 #include "brass_replicate_internal.h"
 #include "brass_document.h"
-#include "../flint_lock.h"
 #include "brass_metadata.h"
 #include "brass_positionlist.h"
 #include "brass_postlist.h"
@@ -54,7 +53,7 @@
 #include "serialise.h"
 #include "str.h"
 #include "stringutils.h"
-//#include "utils.h"
+#include "safefcntl.h"
 #include "valuestats.h"
 
 #include "safeerrno.h"

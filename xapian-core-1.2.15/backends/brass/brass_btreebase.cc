@@ -25,7 +25,7 @@
 #include <xapian/error.h>
 
 #include "brass_btreebase.h"
-//#include "io_utils.h"
+#include "safefcntl.h"
 #include "omassert.h"
 #include "pack.h"
 #include "str.h"

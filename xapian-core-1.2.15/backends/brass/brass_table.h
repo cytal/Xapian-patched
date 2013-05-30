@@ -36,6 +36,7 @@
 #include "str.h"
 #include "stringutils.h"
 #include "unaligned.h"
+#include "safefcntl.h"
 
 #include <algorithm>
 #include <string>
@@ -318,8 +319,8 @@ class XAPIAN_VISIBILITY_DEFAULT BrassTable {
 	 *			needed.
 	 */
 	BrassTable(const char * tablename_, const std::string & path_,
-		   bool readonly_, int compress_strategy_ /*= DONT_COMPRESS*/,
-		   bool lazy /*= false*/, Xapian::FileSystem file_system_ /*= Xapian::FileSystem()*/ );
+		   bool readonly_, int compress_strategy_ = DONT_COMPRESS,
+		   bool lazy = false, Xapian::FileSystem file_system_ = Xapian::FileSystem() );
 
 	/** Close the Btree.
 	 *

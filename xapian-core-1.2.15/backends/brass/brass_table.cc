@@ -1651,7 +1651,8 @@ BrassTable::create_and_open(unsigned int block_size_)
     base_.set_block_size(block_size_);
     base_.set_have_fakeroot(true);
     base_.set_sequential(true);
-	base_.write_to_file(name + "baseA", file_system, 'A', string(), Xapian::File(), NULL);
+	Xapian::File	dummy;
+	base_.write_to_file(name + "baseA", file_system, 'A', string(), dummy, NULL);
 
     /* remove the alternative base file, if any */
     file_system.unlink(name + "baseB");
