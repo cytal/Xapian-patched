@@ -89,7 +89,7 @@ BrassVersion::create()
 void
 BrassVersion::read_and_check()
 {
-	Xapian::File fd = file_system.open( filename, O_WRONLY|O_CREAT|O_TRUNC|O_BINARY, 0666);
+	Xapian::File fd = file_system.open( filename, O_RDONLY|O_BINARY, 0666);
 
     if ( !fd.is_opened() ) {
 	string msg = filename;
